@@ -1,0 +1,5 @@
+allowBuilds:
+  # esbuild ships a native binary via a postinstall script; allow it so `vite build` works.
+  esbuild: true
+# Don't run an implicit install/verify before every `pnpm exec`/`run` (fails on custom lockfile policy).
+verifyDepsBeforeRun: false
