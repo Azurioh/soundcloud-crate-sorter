@@ -58,6 +58,10 @@ pub enum ClassificationReason {
     ManualPick,
     /// Flagged as likely non-music / non-mixable and routed to a review crate (FR-030).
     LikelyNonMusic,
+    /// The AI classifier was unavailable (rate-limited / transport / bad response); the track was
+    /// routed to triage without a determined genre. Distinct from `GenreFromAi` so the audit trail
+    /// can tell "AI ran, found nothing" apart from "AI never answered" (Principle VII).
+    ClassifierUnavailable,
 }
 
 impl ClassificationReason {
@@ -70,6 +74,7 @@ impl ClassificationReason {
             Self::AudioFeatures => "audio_features",
             Self::ManualPick => "manual_pick",
             Self::LikelyNonMusic => "likely_non_music",
+            Self::ClassifierUnavailable => "classifier_unavailable",
         }
     }
 }

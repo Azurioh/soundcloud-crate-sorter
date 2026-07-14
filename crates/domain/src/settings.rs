@@ -30,13 +30,16 @@ impl ExportMode {
         }
     }
 
-    /// Parses a persistence token back into an export mode, defaulting to `Local` for unknown input.
+    /// Parses a persistence token back into an export mode, or `None` for an unrecognized token
+    /// (matching the other persisted enums — the caller decides how to treat corruption rather than
+    /// silently downgrading to `Local`).
     #[must_use]
-    pub fn from_token(token: &str) -> Self {
+    pub fn from_token(token: &str) -> Option<Self> {
         match token {
-            "soundcloud" => Self::SoundCloud,
-            "both" => Self::Both,
-            _ => Self::Local,
+            "local" => Some(Self::Local),
+            "soundcloud" => Some(Self::SoundCloud),
+            "both" => Some(Self::Both),
+            _ => None,
         }
     }
 }
@@ -123,5 +126,13 @@ mod tests {
             s.confidence_threshold().value(),
             DEFAULT_CONFIDENCE_THRESHOLD
         );
+    }
+
+    #[test]
+    fn export_mode_token_round_trips_and_rejects_unknown() {
+        for mode in [ExportMode::Local, ExportMode::SoundCloud, ExportMode::Both] {
+            assert_eq!(ExportMode::from_token(mode.as_str()), Some(mode));
+        }
+        assert_eq!(ExportMode::from_token("nope"), None);
     }
 }

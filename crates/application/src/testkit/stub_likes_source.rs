@@ -7,7 +7,7 @@ use domain::track::LikedTrack;
 use crate::ports::likes_source::{LikesSourceError, LikesSourcePort, SourceUserId};
 
 /// A `LikesSourcePort` that resolves any profile URL to a fixed user id and returns a preloaded
-/// set of likes. A configured `resolve_error` lets tests exercise the failure path.
+/// set of likes. The `profile_not_found` constructor exercises the resolve failure path.
 #[derive(Debug, Clone)]
 pub struct StubLikesSource {
     user_id: String,

@@ -150,9 +150,11 @@ impl ClassifyTrack {
                     reason: ClassificationReason::GenreFromAi,
                     vibe_tags: suggestion.vibe_tags,
                 },
-                None => fallback_decision(),
+                // The AI answered but offered no genre.
+                None => fallback_decision(ClassificationReason::GenreFromAi),
             },
-            Err(_) => fallback_decision(),
+            // The AI never answered (rate-limit/transport/bad response) — record it as such.
+            Err(_) => fallback_decision(ClassificationReason::ClassifierUnavailable),
         }
     }
 
@@ -194,12 +196,13 @@ fn is_likely_non_music(duration_ms: u64) -> bool {
     !(MIN_MUSIC_DURATION_MS..=MAX_MUSIC_DURATION_MS).contains(&duration_ms)
 }
 
-/// The low-confidence "no genre determined" decision that routes a track to triage.
-fn fallback_decision() -> GenreDecision {
+/// The low-confidence "no genre determined" decision that routes a track to triage. `reason`
+/// records *why* no genre was determined (AI answered but empty vs. AI unavailable).
+fn fallback_decision(reason: ClassificationReason) -> GenreDecision {
     GenreDecision {
         genre: UNKNOWN_CRATE_GENRE.to_owned(),
         confidence: constant_confidence(FALLBACK_CONFIDENCE),
-        reason: ClassificationReason::GenreFromAi,
+        reason,
         vibe_tags: Vec::new(),
     }
 }
@@ -316,6 +319,7 @@ mod tests {
             .unwrap();
 
         assert!((result.confidence.value() - FALLBACK_CONFIDENCE).abs() < f32::EPSILON);
+        assert_eq!(result.reason, ClassificationReason::ClassifierUnavailable);
         assert_eq!(
             fx.crates.list().await.unwrap()[0].genre(),
             UNKNOWN_CRATE_GENRE

@@ -18,6 +18,10 @@ const API_BASE: &str = "https://api-v2.soundcloud.com";
 const WEB_BASE: &str = "https://soundcloud.com";
 /// Page size for the likes endpoint.
 const LIKES_LIMIT: u32 = 200;
+/// Hard cap on likes pages to follow. `next_href` comes from an unofficial endpoint; a
+/// non-terminating or cyclic cursor must not loop forever / grow the result unboundedly. At
+/// `LIKES_LIMIT` per page this bounds a single sync well above any real library.
+const MAX_LIKES_PAGES: u32 = 500;
 /// Maximum retry attempts on a rate-limited (429) response.
 const MAX_RETRIES: u32 = 3;
 /// Base backoff between retries (multiplied by the attempt number).
@@ -161,7 +165,10 @@ impl LikesSourcePort for InternalApiLikesSource {
 
         let mut liked = Vec::new();
         let mut next_url = Some(first_url);
-        while let Some(url) = next_url {
+        for _ in 0..MAX_LIKES_PAGES {
+            let Some(url) = next_url.take() else {
+                return Ok(liked);
+            };
             let response = self.send_with_retry(self.client.get(&url)).await?;
             match response.status() {
                 StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
@@ -181,7 +188,11 @@ impl LikesSourcePort for InternalApiLikesSource {
             }
             next_url = page.next_href;
         }
-        Ok(liked)
+        // The cursor never terminated within the page cap — treat as a misbehaving endpoint
+        // rather than looping forever.
+        Err(LikesSourceError::Transport {
+            source: format!("likes pagination exceeded {MAX_LIKES_PAGES} pages").into(),
+        })
     }
 }
 

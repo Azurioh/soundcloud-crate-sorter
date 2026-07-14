@@ -51,11 +51,12 @@ impl SettingsRepository for SqliteSettingsRepository {
                         source: Box::new(e),
                     }
                 })?;
-                Ok(Settings::new(
-                    threshold,
-                    download_enabled != 0,
-                    ExportMode::from_token(&export_mode),
-                ))
+                let export_mode = ExportMode::from_token(&export_mode).ok_or_else(|| {
+                    RepoError::Serialization {
+                        source: "unknown export_mode token".into(),
+                    }
+                })?;
+                Ok(Settings::new(threshold, download_enabled != 0, export_mode))
             }
         }
     }

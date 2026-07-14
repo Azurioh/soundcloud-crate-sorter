@@ -11,13 +11,15 @@ use application::ports::crate_repository::CrateRepository;
 use application::ports::genre_vibe_classifier::{ClassificationInput, GenreVibeClassifierPort};
 use application::ports::likes_source::LikesSourcePort;
 use application::ports::repo_error::RepoError;
+use application::ports::settings_repository::SettingsRepository;
 use application::ports::track_repository::TrackRepository;
 use domain::audit::{
     AuditDetail, AuditEvent, AuditEventId, AuditKind, AuditOutcome, NewAuditEvent, PipelineStage,
     RunId,
 };
-use domain::confidence::Confidence;
+use domain::confidence::{Confidence, ConfidenceThreshold};
 use domain::crate_::CrateId;
+use domain::settings::{ExportMode, Settings};
 use domain::timestamp::Timestamp;
 use domain::track::{LikedTrack, Track, TrackId, TrackStatus};
 use uuid::Uuid;
@@ -158,15 +160,22 @@ pub async fn audit_log_suite(log: &dyn AuditLogPort) {
         occurred_at: Timestamp::from_millis(20),
     });
 
-    log.record(first).await.expect("record first");
+    // Insert newest-first so a correct implementation must re-order to oldest-first — an insertion-
+    // order query would fail this, unlike a pre-sorted fixture.
     log.record(second).await.expect("record second");
+    log.record(first).await.expect("record first");
 
     let events = log
         .events_for_track(&track_id)
         .await
         .expect("events for track");
     assert_eq!(events.len(), 2);
-    assert!(events[0].occurred_at().as_millis() <= events[1].occurred_at().as_millis());
+    assert_eq!(
+        events[0].occurred_at().as_millis(),
+        10,
+        "oldest event must come first regardless of insertion order"
+    );
+    assert!(events[0].occurred_at().as_millis() < events[1].occurred_at().as_millis());
     let detail: Vec<(String, String)> = events[0]
         .detail()
         .entries()
@@ -184,6 +193,25 @@ pub async fn likes_source_suite(source: &dyn LikesSourcePort, profile_url: &str)
     let likes = source.list_likes(&user).await.expect("list likes");
     assert!(!likes.is_empty(), "expected at least one liked track");
     assert!(likes.iter().all(|t| !t.source_track_id.is_empty()));
+}
+
+/// `SettingsRepository` contract: an empty store loads the defaults; a saved non-default `Settings`
+/// round-trips exactly (including the `export_mode` token) through save→load.
+pub async fn settings_repository_suite(repo: &dyn SettingsRepository) {
+    // Nothing saved yet → the documented defaults.
+    let loaded_default = repo.load().await.expect("load default");
+    assert_eq!(loaded_default, Settings::default());
+
+    // A non-default value must survive a save→load round-trip unchanged.
+    let threshold = ConfidenceThreshold::new(0.42).expect("in-range threshold");
+    let saved = Settings::new(threshold, true, ExportMode::SoundCloud);
+    repo.save(&saved).await.expect("save settings");
+
+    let reloaded = repo.load().await.expect("load saved");
+    assert_eq!(reloaded, saved);
+    assert_eq!(reloaded.export_mode(), ExportMode::SoundCloud);
+    assert!(reloaded.download_enabled());
+    assert!((reloaded.confidence_threshold().value() - 0.42).abs() < f32::EPSILON);
 }
 
 /// `GenreVibeClassifierPort` contract: returns at least one candidate for a plausible track.

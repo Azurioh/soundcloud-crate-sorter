@@ -261,6 +261,13 @@ fn raw_to_track(raw: RawTrackRow) -> Result<Track, RepoError> {
     let status = TrackStatus::from_token(&raw.status).ok_or_else(|| RepoError::Serialization {
         source: "unknown track status".into(),
     })?;
+    // Surface corrupt numerics rather than fabricating plausible values (0 / u16::MAX) from them,
+    // consistent with the energy/confidence handling above.
+    let duration_ms = u64::try_from(raw.duration_ms).map_err(serialization)?;
+    let bpm = raw
+        .bpm
+        .map(|b| u16::try_from(b).map_err(serialization))
+        .transpose()?;
 
     Ok(Track::from_record(TrackRecord {
         id,
@@ -268,10 +275,10 @@ fn raw_to_track(raw: RawTrackRow) -> Result<Track, RepoError> {
         title: raw.title,
         artist: raw.artist,
         source_genre: raw.source_genre,
-        duration_ms: u64::try_from(raw.duration_ms).unwrap_or(0),
+        duration_ms,
         permalink_url: raw.permalink_url,
         artwork_url: raw.artwork_url,
-        bpm: raw.bpm.map(|b| u16::try_from(b).unwrap_or(u16::MAX)),
+        bpm,
         camelot_key,
         energy,
         vibe_tags,

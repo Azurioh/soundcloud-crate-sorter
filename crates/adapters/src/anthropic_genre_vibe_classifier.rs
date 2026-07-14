@@ -26,6 +26,10 @@ const MAX_TOKENS: u32 = 512;
 const CONFIDENCE_MIN: f32 = 0.0;
 /// Upper bound used when clamping a model-supplied confidence into range.
 const CONFIDENCE_MAX: f32 = 1.0;
+/// Max characters of any untrusted metadata field spliced into the prompt. Title/artist/genre/
+/// description originate from attacker-controllable SoundCloud uploads; capping them bounds the
+/// prompt-injection surface and the input-token cost/latency amplification of a huge description.
+const MAX_PROMPT_FIELD_CHARS: usize = 400;
 
 /// The system prompt: constrain the model to genre/vibe only, JSON output, no audio features.
 const SYSTEM_PROMPT: &str =
@@ -103,16 +107,25 @@ impl GenreVibeClassifierPort for AnthropicGenreVibeClassifier {
     }
 }
 
-/// Builds the user-turn prompt from the track's text signals.
+/// Builds the user-turn prompt from the track's text signals, truncating each untrusted field.
 fn user_prompt(input: &ClassificationInput) -> String {
-    let mut prompt = format!("Title: {}\nArtist: {}", input.title, input.artist);
+    let mut prompt = format!(
+        "Title: {}\nArtist: {}",
+        truncated(&input.title),
+        truncated(&input.artist)
+    );
     if let Some(genre) = &input.source_genre {
-        prompt.push_str(&format!("\nSource genre tag: {genre}"));
+        prompt.push_str(&format!("\nSource genre tag: {}", truncated(genre)));
     }
     if let Some(description) = &input.description {
-        prompt.push_str(&format!("\nDescription: {description}"));
+        prompt.push_str(&format!("\nDescription: {}", truncated(description)));
     }
     prompt
+}
+
+/// Truncates untrusted text to at most `MAX_PROMPT_FIELD_CHARS` characters (char-boundary safe).
+fn truncated(field: &str) -> String {
+    field.chars().take(MAX_PROMPT_FIELD_CHARS).collect()
 }
 
 /// Extracts the first text block, parses its embedded JSON, and maps to a domain suggestion.
@@ -150,8 +163,11 @@ fn dto_to_suggestion(dto: SuggestionDto) -> GenreVibeSuggestion {
     let mut candidates = Vec::new();
     for candidate in dto.candidates {
         let clamped = candidate.confidence.clamp(CONFIDENCE_MIN, CONFIDENCE_MAX);
-        let confidence =
-            Confidence::new(clamped).expect("clamped value is within [0.0, 1.0] by construction");
+        // `clamp` returns NaN when the model emits a NaN confidence; never panic on model data —
+        // fall back to the minimum (which routes the candidate to triage).
+        let confidence = Confidence::new(clamped).unwrap_or_else(|_| {
+            Confidence::new(CONFIDENCE_MIN).expect("CONFIDENCE_MIN is a valid confidence")
+        });
         candidates.push(GenreCandidate {
             genre: candidate.genre,
             confidence,
@@ -237,5 +253,32 @@ mod tests {
         assert_eq!(suggestion.candidates[0].confidence.value(), 1.0);
         assert_eq!(suggestion.candidates[1].confidence.value(), 0.4);
         assert_eq!(suggestion.vibe_tags, vec!["dark".to_string()]);
+    }
+
+    #[test]
+    fn nan_confidence_falls_back_to_min_without_panicking() {
+        let dto = SuggestionDto {
+            candidates: vec![CandidateDto {
+                genre: "Techno".into(),
+                confidence: f32::NAN,
+            }],
+            vibe_tags: vec![],
+        };
+        let suggestion = dto_to_suggestion(dto);
+        assert_eq!(suggestion.candidates[0].confidence.value(), CONFIDENCE_MIN);
+    }
+
+    #[test]
+    fn user_prompt_truncates_long_untrusted_fields() {
+        let long = "x".repeat(MAX_PROMPT_FIELD_CHARS + 50);
+        let input = ClassificationInput {
+            title: long,
+            artist: "a".into(),
+            source_genre: None,
+            description: None,
+        };
+        let prompt = user_prompt(&input);
+        assert!(prompt.contains(&"x".repeat(MAX_PROMPT_FIELD_CHARS)));
+        assert!(!prompt.contains(&"x".repeat(MAX_PROMPT_FIELD_CHARS + 1)));
     }
 }
