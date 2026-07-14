@@ -93,25 +93,29 @@ function TrackRow({ track }: { track: TrackView }) {
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const confidence = track.confidence === null ? "—" : `${Math.round(track.confidence * 100)}%`;
 
-  const toggle = useCallback(async () => {
-    if (open) {
-      setOpen(false);
-      return;
+  const load = useCallback(async () => {
+    setLoading(true);
+    setAuditError(null);
+    try {
+      setEvents(await trackAudit(track.id));
+    } catch (e) {
+      // Leave events null so a retry re-fetches, rather than caching the failure as "no events".
+      setAuditError(toMessage(e));
+    } finally {
+      setLoading(false);
     }
-    setOpen(true);
-    if (events === null) {
-      setLoading(true);
-      try {
-        setEvents(await trackAudit(track.id));
-      } catch {
-        setEvents([]);
-      } finally {
-        setLoading(false);
-      }
+  }, [track.id]);
+
+  const toggle = useCallback(() => {
+    const next = !open;
+    setOpen(next);
+    if (next && events === null && !loading) {
+      void load();
     }
-  }, [open, events, track.id]);
+  }, [open, events, loading, load]);
 
   return (
     <>
@@ -129,7 +133,18 @@ function TrackRow({ track }: { track: TrackView }) {
       {open && (
         <tr className="audit-row">
           <td colSpan={5}>
-            {loading ? <span className="muted">Loading trail…</span> : <AuditTrail events={events ?? []} />}
+            {loading ? (
+              <span className="muted">Loading trail…</span>
+            ) : auditError !== null ? (
+              <span className="audit-error" role="alert">
+                Could not load the audit trail.{" "}
+                <button type="button" className="link-button" onClick={() => void load()}>
+                  Retry
+                </button>
+              </span>
+            ) : (
+              <AuditTrail events={events ?? []} />
+            )}
           </td>
         </tr>
       )}

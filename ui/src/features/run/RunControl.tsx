@@ -40,7 +40,7 @@ export function RunControl({ onLibraryChanged }: RunControlProps) {
     setBusy(true);
     setError(null);
     try {
-      setScanResult(await scan(profileUrl));
+      setScanResult(await scan(profileUrl.trim()));
       await refreshSummary();
       onLibraryChanged();
     } catch (e) {

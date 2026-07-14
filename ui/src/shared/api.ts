@@ -1,5 +1,9 @@
 // Typed wrappers over the Tauri command bridge. Components depend on these functions, never on
 // `invoke` directly — the one canonical path to the Rust core (matches the repository pattern).
+//
+// Argument keys are camelCase: Tauri v2's command macro defaults to `rename_all = "camelCase"`, so
+// a Rust parameter `profile_url` is bound from the IPC key `profileUrl`. Sending snake_case keys
+// would leave the argument unbound and the command would reject before running.
 import { invoke } from "@tauri-apps/api/core";
 
 export interface ScanResult {
@@ -55,7 +59,7 @@ export interface AuditEvent {
 
 /** Scans a public SoundCloud profile's likes into the library. */
 export function scan(profileUrl: string): Promise<ScanResult> {
-  return invoke<ScanResult>("scan", { profile_url: profileUrl });
+  return invoke<ScanResult>("scan", { profileUrl });
 }
 
 /** Classifies and routes every scanned track. */
@@ -75,5 +79,5 @@ export function runSummary(): Promise<RunSummary> {
 
 /** Returns a track's audit trail ("why is this track in this crate?"). */
 export function trackAudit(trackId: string): Promise<AuditEvent[]> {
-  return invoke<AuditEvent[]>("track_audit", { track_id: trackId });
+  return invoke<AuditEvent[]>("track_audit", { trackId });
 }

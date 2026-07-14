@@ -260,6 +260,11 @@ button:disabled {
   background: var(--bg);
 }
 
+.audit-error {
+  color: var(--error-text);
+  font-size: 0.85rem;
+}
+
 .audit-trail {
   list-style: none;
   margin: 0;
