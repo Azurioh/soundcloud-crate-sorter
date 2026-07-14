@@ -1,1 +1,109 @@
 @import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* shadcn convention: :root = light, .dark = dark. Dark is the product default —
+   the ThemeProvider adds `.dark` on <html> unless the user selects light. */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.625rem;
+
+  /* Light */
+  --background: #f6f7f9;
+  --foreground: #1b1e24;
+  --card: #ffffff;
+  --card-foreground: #1b1e24;
+  --popover: #ffffff;
+  --popover-foreground: #1b1e24;
+  --primary: #ff5500; /* SoundCloud orange */
+  --primary-foreground: #ffffff;
+  --secondary: #eef0f3;
+  --secondary-foreground: #1b1e24;
+  --muted: #eef0f3;
+  --muted-foreground: #6b7280;
+  --accent: #e9ebef;
+  --accent-foreground: #1b1e24;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e2e5ea;
+  --input: #e2e5ea;
+  --ring: #ff5500;
+
+  /* Semantic status/confidence tones */
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+}
+
+.dark {
+  /* Dark DJ console (default) */
+  --background: #0b0d10;
+  --foreground: #e8eaed;
+  --card: #16181d;
+  --card-foreground: #e8eaed;
+  --popover: #16181d;
+  --popover-foreground: #e8eaed;
+  --primary: #ff5500;
+  --primary-foreground: #ffffff;
+  --secondary: #1f2229;
+  --secondary-foreground: #e8eaed;
+  --muted: #1f2229;
+  --muted-foreground: #9aa0aa;
+  --accent: #23262e;
+  --accent-foreground: #e8eaed;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #2c313a;
+  --input: #2c313a;
+  --ring: #ff5500;
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  body {
+    margin: 0;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+}
