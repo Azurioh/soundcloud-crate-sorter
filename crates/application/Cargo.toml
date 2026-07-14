@@ -1,0 +1,15 @@
+[package]
+name = "application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait = "0.1.89"
+domain = { path = "../domain" }
+thiserror = "2.0.18"
+uuid = "1.20.0"
+
+[dev-dependencies]
+tokio = { version = "1.52.3", features = ["macros", "rt"] }
