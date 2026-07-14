@@ -194,10 +194,9 @@ Deliverable: the dark-DJ-console token system + a working dark/light toggle (dar
 **Files:**
 - Modify: `ui/src/styles.css` (full token system)
 - Create: `ui/src/shared/theme/theme-provider.tsx`
-- Create: `ui/src/shared/theme/theme-toggle.tsx`
 
 **Interfaces:**
-- Produces: CSS variables per shadcn convention plus `--success` / `--warning` / `--danger`; theme colors `success|warning|danger` usable as Tailwind utilities (`bg-success/15 text-success`); `<ThemeProvider>` and `useTheme()` from `@/shared/theme/theme-provider`; `<ThemeToggle />` from `@/shared/theme/theme-toggle`.
+- Produces: CSS variables per shadcn convention plus `--success` / `--warning` / `--danger`; theme colors `success|warning|danger` usable as Tailwind utilities (`bg-success/15 text-success`); `<ThemeProvider>` and `useTheme()` from `@/shared/theme/theme-provider`. (The `ThemeToggle` that consumes this provider is built in Task 3, once `Button` exists.)
 
 - [ ] **Step 1: Bundle the fonts offline**
 
@@ -215,47 +214,21 @@ Replace `ui/src/styles.css` with:
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
 
-/* Dark is the default theme; .light overrides on the html element. */
-@custom-variant light (&:where(.light, .light *));
+/* shadcn convention: :root = light, .dark = dark. Dark is the product default —
+   the ThemeProvider adds `.dark` on <html> unless the user selects light. */
+@custom-variant dark (&:is(.dark *));
 
 :root {
   --radius: 0.625rem;
 
-  /* Dark DJ console (default) */
-  --background: #0b0d10;
-  --foreground: #e8eaed;
-  --card: #16181d;
-  --card-foreground: #e8eaed;
-  --popover: #16181d;
-  --popover-foreground: #e8eaed;
-  --primary: #ff5500; /* SoundCloud orange */
-  --primary-foreground: #ffffff;
-  --secondary: #1f2229;
-  --secondary-foreground: #e8eaed;
-  --muted: #1f2229;
-  --muted-foreground: #9aa0aa;
-  --accent: #23262e;
-  --accent-foreground: #e8eaed;
-  --destructive: #ef4444;
-  --destructive-foreground: #ffffff;
-  --border: #2c313a;
-  --input: #2c313a;
-  --ring: #ff5500;
-
-  /* Semantic status/confidence tones */
-  --success: #22c55e;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-}
-
-.light {
+  /* Light */
   --background: #f6f7f9;
   --foreground: #1b1e24;
   --card: #ffffff;
   --card-foreground: #1b1e24;
   --popover: #ffffff;
   --popover-foreground: #1b1e24;
-  --primary: #ff5500;
+  --primary: #ff5500; /* SoundCloud orange */
   --primary-foreground: #ffffff;
   --secondary: #eef0f3;
   --secondary-foreground: #1b1e24;
@@ -269,9 +242,37 @@ Replace `ui/src/styles.css` with:
   --input: #e2e5ea;
   --ring: #ff5500;
 
+  /* Semantic status/confidence tones */
   --success: #16a34a;
   --warning: #d97706;
   --danger: #dc2626;
+}
+
+.dark {
+  /* Dark DJ console (default) */
+  --background: #0b0d10;
+  --foreground: #e8eaed;
+  --card: #16181d;
+  --card-foreground: #e8eaed;
+  --popover: #16181d;
+  --popover-foreground: #e8eaed;
+  --primary: #ff5500;
+  --primary-foreground: #ffffff;
+  --secondary: #1f2229;
+  --secondary-foreground: #e8eaed;
+  --muted: #1f2229;
+  --muted-foreground: #9aa0aa;
+  --accent: #23262e;
+  --accent-foreground: #e8eaed;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #2c313a;
+  --input: #2c313a;
+  --ring: #ff5500;
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
 }
 
 @theme inline {
@@ -360,7 +361,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const root = document.documentElement;
-    root.classList.toggle("light", theme === "light");
+    root.classList.toggle("dark", theme === "dark");
     localStorage.setItem(STORAGE_KEY, theme);
   }, [theme]);
 
@@ -386,44 +387,15 @@ export function useTheme(): ThemeContextValue {
 }
 ```
 
-- [ ] **Step 4: Create the theme toggle button**
-
-Create `ui/src/shared/theme/theme-toggle.tsx`:
-
-```typescript
-import { Moon, Sun } from "lucide-react";
-import { Button } from "@/shared/ui/button";
-import { useTheme } from "@/shared/theme/theme-provider";
-
-/** Header control that flips between dark and light themes. */
-export function ThemeToggle() {
-  const { theme, toggle } = useTheme();
-  const isDark = theme === "dark";
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon"
-      onClick={toggle}
-      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
-    >
-      {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-    </Button>
-  );
-}
-```
-
-> Note: `theme-toggle.tsx` imports `@/shared/ui/button`, created in Task 3. It will not typecheck until Task 3 adds the Button. That is expected ordering; do not add a placeholder Button here.
-
-- [ ] **Step 5: Verify tokens compile**
+- [ ] **Step 4: Verify tokens + provider compile**
 
 Run:
 ```bash
-cd ui && pnpm exec vite build
+cd ui && pnpm typecheck && pnpm build
 ```
-Expected: PASS (theme-toggle is not yet imported by any entry, so its missing Button import is not in the graph). If the build pulls it in, defer this verification to the end of Task 3.
+Expected: PASS, zero warnings. The provider imports only React, so it typechecks standalone; nothing imports it yet, which is fine.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add ui/src/styles.css ui/src/shared/theme ui/package.json ui/pnpm-lock.yaml
@@ -441,14 +413,17 @@ Deliverable: every primitive the two screens need is present under `shared/ui/`,
 - Create: `ui/src/shared/ui/tone-badge.tsx`
 - Create: `ui/src/shared/display/track-status.ts`
 - Create: `ui/src/shared/display/confidence-tone.ts`
+- Create: `ui/src/shared/theme/theme-toggle.tsx` (deferred from Task 2 — needs `Button`)
 
 **Interfaces:**
+- Consumes: `ThemeProvider` / `useTheme()` from `@/shared/theme/theme-provider` (Task 2).
 - Produces:
   - shadcn `Button`, `Input`, `Label`, `Card` (+`CardHeader`/`CardTitle`/`CardContent`), `Table` (+ parts), `Badge`, `Collapsible` (+`CollapsibleTrigger`/`CollapsibleContent`), `Alert` (+`AlertTitle`/`AlertDescription`), `Skeleton`, `ScrollArea`, `Separator`, `Tooltip`.
   - `type Tone = "success" | "warning" | "danger" | "neutral" | "info"`
   - `<ToneBadge tone={Tone}>…</ToneBadge>` from `@/shared/ui/tone-badge`
   - `statusToBadge(status: string): { label: string; tone: Tone }` from `@/shared/display/track-status`
   - `confidenceTone(confidence: number | null): { label: string; tone: Tone }` from `@/shared/display/confidence-tone`
+  - `<ThemeToggle />` from `@/shared/theme/theme-toggle`
 
 - [ ] **Step 1: Add the primitives via the shadcn CLI**
 
@@ -597,19 +572,46 @@ export function confidenceTone(confidence: number | null): ConfidenceBadge {
 }
 ```
 
-- [ ] **Step 6: Verify (this also clears Task 2 Step 5's deferred check)**
+- [ ] **Step 6: Create the theme toggle button (`Button` now exists)**
+
+Create `ui/src/shared/theme/theme-toggle.tsx`:
+
+```typescript
+import { Moon, Sun } from "lucide-react";
+import { Button } from "@/shared/ui/button";
+import { useTheme } from "@/shared/theme/theme-provider";
+
+/** Header control that flips between dark and light themes. */
+export function ThemeToggle() {
+  const { theme, toggle } = useTheme();
+  const isDark = theme === "dark";
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      onClick={toggle}
+      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
+    >
+      {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+    </Button>
+  );
+}
+```
+
+- [ ] **Step 7: Verify**
 
 Run:
 ```bash
 cd ui && pnpm typecheck && pnpm build
 ```
-Expected: PASS, zero warnings. `theme-toggle.tsx` now resolves `Button`.
+Expected: PASS, zero warnings.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add ui/src/shared/ui ui/src/shared/display ui/package.json ui/pnpm-lock.yaml
-git commit -m "feat(ui): add shadcn primitives, tone badge, status/confidence helpers"
+git add ui/src/shared/ui ui/src/shared/display ui/src/shared/theme/theme-toggle.tsx ui/package.json ui/pnpm-lock.yaml
+git commit -m "feat(ui): add shadcn primitives, tone badge, status/confidence helpers, theme toggle"
 ```
 
 ---
@@ -1267,7 +1269,9 @@ git commit -m "chore(ui): remove dead legacy CSS after shadcn migration"
 - §8 verification (typecheck/build/tauri dev/ui-fidelity-check) → per-task + Task 8. ✓
 - §3 constraints (offline fonts, canonical path, a11y, responsive, clean build) → Global Constraints + enforced per task. ✓
 
-**Placeholder scan:** No TBD/TODO. The two forward-reference notes (Task 2 Step 5 deferral, Task 7 Step 5 `scope`) are explicit, resolved instructions, not gaps.
+**Placeholder scan:** No TBD/TODO. The Task 7 Step 5 `scope`-prop note is an explicit, resolved instruction, not a gap.
+
+**Theming:** shadcn convention — `:root` = light, `.dark` = dark, `@custom-variant dark`. Dark-first is achieved by the `ThemeProvider` defaulting to `dark` (adds `.dark` on `<html>`). `theme-toggle.tsx` is built in Task 3, after `Button` exists, so every task's `pnpm typecheck` gate passes standalone.
 
 **Type consistency:** `Tone` defined once (`@/shared/ui/tone-badge`) and imported by helpers + consumers. `statusToBadge`/`confidenceTone` signatures match their call sites in `TrackRow`. `SummaryStats` `key`s are `keyof RunSummary` (compile-checked). `ErrorBanner` props unchanged across Tasks 4/6/7. shadcn imports use the exact primitive paths added in Task 3.
 
