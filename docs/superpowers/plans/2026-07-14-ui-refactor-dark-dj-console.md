@@ -14,6 +14,10 @@ Every task's requirements implicitly include these.
 
 - **Offline / no CDN.** No Google Fonts `<link>`, no remote CSS/JS/asset. Fonts via `@fontsource-variable/*` npm packages, imported in CSS. Icons via bundled `lucide-react`.
 - **Canonical core path.** Components import from `shared/api.ts` only — never `@tauri-apps/api` `invoke` directly. This refactor adds no second path.
+- **Preserve upstream fix `02bc116`.** `feat/ui-refactor` is rebased onto it; these behaviors are live in the tree and MUST survive any rewrite:
+  - `shared/api.ts` sends **camelCase** IPC keys (`{ profileUrl }`, `{ trackId }`) — Tauri v2's command macro defaults to `rename_all = "camelCase"`. Never revert to snake_case. `api.ts` stays untouched by this refactor.
+  - `RunControl` trims the profile URL before scanning: `scan(profileUrl.trim())`.
+  - The audit-trail read never caches a failure as "no events": on error keep `events` null, show a distinct message with a **Retry** action.
 - **Feature-first, no cross-feature imports.** `features/run` and `features/crates` never import each other. Code used by both lives in `shared/`.
 - **Install via package manager.** `pnpm add` / `pnpm dlx` inside `ui/`; never hand-edit `package.json` versions. Prefer latest stable.
 - **Accessibility floors.** Tap targets ≥ 44px; `role="alert"` on error banner; `aria-expanded` on the "Why?" toggle; `scope="col"` on table headers; visible focus rings; contrast ≥ 4.5:1 both themes; `color-not-only` (status/confidence carry text, not color alone); respect `prefers-reduced-motion`.
@@ -855,7 +859,7 @@ export function RunControl({ onLibraryChanged }: RunControlProps) {
     setBusy(true);
     setError(null);
     try {
-      setScanResult(await scan(profileUrl));
+      setScanResult(await scan(profileUrl.trim()));
       await refreshSummary();
       onLibraryChanged();
     } catch (e) {
@@ -996,9 +1000,17 @@ export function AuditTrail({ events }: { events: AuditEvent[] }) {
 
 - [ ] **Step 2: Create `TrackRow.tsx`**
 
+> **Preserve commit `02bc116` behavior.** The current `CrateBrowser.tsx` already hardens the
+> audit-trail load (added upstream on `feat/desktop-shell`): a failed read must NOT be cached as
+> "no events". Keep `events` null on error, surface a distinct message with a **Retry** action, and
+> keep `aria-expanded` on the toggle. The code below carries that behavior forward onto the shadcn
+> primitives — do not regress it back to `catch { setEvents([]) }`. The old `.audit-error` CSS class
+> no longer exists (tokens replaced it); style the error with `text-destructive`.
+
 ```typescript
 import { useCallback, useState } from "react";
 import { trackAudit, type AuditEvent, type TrackView } from "@/shared/api";
+import { toMessage } from "@/shared/errors";
 import { statusToBadge } from "@/shared/display/track-status";
 import { confidenceTone } from "@/shared/display/confidence-tone";
 import { ToneBadge } from "@/shared/ui/tone-badge";
@@ -1011,26 +1023,30 @@ export function TrackRow({ track }: { track: TrackView }) {
   const [open, setOpen] = useState(false);
   const [events, setEvents] = useState<AuditEvent[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const confidence = confidenceTone(track.confidence);
   const status = statusToBadge(track.status);
 
-  const toggle = useCallback(async () => {
-    if (open) {
-      setOpen(false);
-      return;
+  const load = useCallback(async () => {
+    setLoading(true);
+    setAuditError(null);
+    try {
+      setEvents(await trackAudit(track.id));
+    } catch (e) {
+      // Leave events null so a retry re-fetches, rather than caching the failure as "no events".
+      setAuditError(toMessage(e));
+    } finally {
+      setLoading(false);
     }
-    setOpen(true);
-    if (events === null) {
-      setLoading(true);
-      try {
-        setEvents(await trackAudit(track.id));
-      } catch {
-        setEvents([]);
-      } finally {
-        setLoading(false);
-      }
+  }, [track.id]);
+
+  const toggle = useCallback(() => {
+    const next = !open;
+    setOpen(next);
+    if (next && events === null && !loading) {
+      void load();
     }
-  }, [open, events, track.id]);
+  }, [open, events, loading, load]);
 
   return (
     <>
@@ -1054,12 +1070,40 @@ export function TrackRow({ track }: { track: TrackView }) {
       {open && (
         <TableRow className="bg-muted/40 hover:bg-muted/40">
           <TableCell colSpan={5}>
-            {loading ? <span className="text-sm text-muted-foreground">Loading trail…</span> : <AuditTrail events={events ?? []} />}
+            <AuditCell loading={loading} auditError={auditError} events={events} onRetry={() => void load()} />
           </TableCell>
         </TableRow>
       )}
     </>
   );
+}
+
+/** Renders the audit cell's loading / error / trail branches (module-level: no nested ternary). */
+function AuditCell({
+  loading,
+  auditError,
+  events,
+  onRetry,
+}: {
+  loading: boolean;
+  auditError: string | null;
+  events: AuditEvent[] | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return <span className="text-sm text-muted-foreground">Loading trail…</span>;
+  }
+  if (auditError !== null) {
+    return (
+      <span className="text-sm text-destructive" role="alert">
+        Could not load the audit trail.{" "}
+        <Button type="button" variant="link" size="sm" className="h-auto p-0" onClick={onRetry}>
+          Retry
+        </Button>
+      </span>
+    );
+  }
+  return <AuditTrail events={events ?? []} />;
 }
 ```
 
