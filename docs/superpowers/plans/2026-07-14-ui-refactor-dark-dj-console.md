@@ -525,14 +525,19 @@ function humanize(status: string): string {
   return status.replace(/_/g, " ");
 }
 
+/** Narrows a raw status string to a known status key (no cast — `satisfies` over `as`). */
+function isKnownStatus(status: string): status is KnownStatus {
+  return status in STATUS_BADGES;
+}
+
 /**
  * Maps a track status string to its badge label and tone.
  * @param status - the raw status string from the core
  * @returns label + semantic tone; unknown statuses render neutral + humanized
  */
 export function statusToBadge(status: string): StatusBadge {
-  if (status in STATUS_BADGES) {
-    return STATUS_BADGES[status as KnownStatus];
+  if (isKnownStatus(status)) {
+    return STATUS_BADGES[status];
   }
   return { label: humanize(status), tone: "neutral" };
 }
