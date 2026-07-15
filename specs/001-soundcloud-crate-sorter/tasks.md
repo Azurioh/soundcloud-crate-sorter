@@ -150,22 +150,35 @@ nothing persisted the classifier's conclusion — so the queue had nothing to re
 
 ### Tests
 
-- [ ] T048 [P] [US4] Contract test `AudioDownloaderPort` (in-memory + real) in `tests/contract/audio_downloader.rs`
-- [ ] T049 [P] [US4] Contract test `AudioAnalyzerPort` — determinism + known-key fixtures cross-checked vs Mixxx in `tests/contract/audio_analyzer.rs`
-- [ ] T050 [P] [US4] Unit tests for `DownloadAudio` / `AnalyzeAudio` with fakes
+- [X] T048 [P] [US4] Contract test `AudioDownloaderPort` (in-memory + real) in `crates/adapters/tests/audio_downloader_contract.rs`
+- [X] T049 [P] [US4] Contract test `AudioAnalyzerPort` — determinism (both sides) + known-key/known-tempo fixtures against the real adapter in `crates/adapters/tests/audio_analyzer_contract.rs`
+- [X] T050 [P] [US4] Unit tests for `DownloadAudio` / `AnalyzeAudio` with fakes
 
 ### Implementation
 
-- [ ] T051 [US4] `ytdlp-audio.downloader` adapter (subprocess; per-track failure = typed reported skip) in `crates/adapters/src/ytdlp_audio_downloader.rs`
-- [ ] T052 [US4] `libkeyfinder-aubio-audio.analyzer`: symphonia → f32 PCM; aubio BPM (**flag half-/double-time ambiguity as uncertain → triage, FR-031**); libKeyFinder FFI key; RMS energy; `key_t`→Camelot table (SILENCE→None) in `crates/adapters/src/libkeyfinder_aubio_audio_analyzer.rs`
-- [ ] T053 [US4] Vendor/fork `libkeyfinder-sys`; wire `build.rs` (pkg-config, fftw) + document Apple-Silicon build in `crates/adapters/vendor/libkeyfinder-sys/`
-- [ ] T054 [US4] `DownloadAudio` use case with explicit opt-in gate in `crates/application/src/use_cases/download_audio.rs`
-- [ ] T055 [US4] `AnalyzeAudio` use case (write bpm/key/energy; map energy → `EnergyRole`) in `crates/application/src/use_cases/analyze_audio.rs`
-- [ ] T056 [US4] Extend `ClassifyTrack`/crate creation to add energy sub-role crates + confidence uplift when audio features present; **refine genre-only auto-classified tracks into the energy sub-crate, but NEVER move a `ManuallyDecided` track without explicit confirmation (FR-029, Principle IV)**
-- [ ] T057 [US4] Tauri command + UI opt-in download gate (ToS/personal-use notice) + analysis progress (resumable) in `ui/src/features/run/`
-- [ ] T058 [US4] Emit audit events for download + analysis results
+- [X] T051 [US4] `ytdlp-audio.downloader` adapter (subprocess; per-track failure = typed reported skip) in `crates/adapters/src/ytdlp_audio_downloader.rs`
+- [X] T052 [US4] `libkeyfinder-aubio-audio.analyzer`: symphonia → f32 PCM; aubio BPM (**flag half-/double-time ambiguity as uncertain → triage, FR-031**); libKeyFinder FFI key; RMS energy; `key_t`→Camelot table (SILENCE→None) in `crates/adapters/src/libkeyfinder_aubio_audio_analyzer.rs`
+- [X] T053 [US4] Vendor/fork `libkeyfinder-sys`; wire `build.rs` (pkg-config, fftw) + document Apple-Silicon build in `crates/adapters/vendor/libkeyfinder-sys/`
+- [X] T054 [US4] `DownloadAudio` use case with explicit opt-in gate in `crates/application/src/use_cases/download_audio.rs`
+- [X] T055 [US4] `AnalyzeAudio` use case (writes bpm/key/energy; the energy → `EnergyRole` mapping lives in the domain and is applied by `ClassifyTrack` — T056)
+- [X] T056 [US4] Extend `ClassifyTrack`/crate creation to add energy sub-role crates + confidence uplift when audio features present; **refine genre-only auto-classified tracks into the energy sub-crate, but NEVER move a `ManuallyDecided` track without explicit confirmation (FR-029, Principle IV)**
+- [X] T057 [US4] Tauri commands (`set_download_enabled`, `analyze_library`) + UI opt-in download gate (ToS/personal-use notice) + analysis progress (resumable) in `ui/src/features/run/AudioAnalysisPanel.tsx`
+- [X] T058 [US4] Emit audit events for download + analysis results
 
-**Checkpoint**: DJ-grade metadata (BPM/key/energy) attached; crates gain energy roles.
+### Added during US4 implementation (not in the original breakdown)
+
+The audio path needed four things the breakdown did not name. Each is recorded here for the same
+reason T047a–e were: a later reader should find the gap explained, not the code unexplained.
+
+- [X] T058a [US4] `domain::audio` (`AudioFeatures`, `TempoAmbiguity`) + `Track::downloaded`/`analyzed`/`has_uncertain_tempo` + `EnergyRole::for_energy`. FR-031 requires a track to *remember* that its BPM is doubtful — a bool the data-model never had — so it needed a domain type, a `tracks.tempo_ambiguity` column, and an additive `ALTER TABLE` migration (`CREATE TABLE IF NOT EXISTS` never alters an existing library)
+- [X] T058b [US4] FR-031 routing in `RouteToTriage`: an uncertain tempo sends a track to triage regardless of genre confidence. Placed there because every path into a crate already runs through it, so no caller can route around the rule
+- [X] T058c [US4] `AnalyzeLibrary` orchestrator (`analyze_library.rs`) — the library-level download→analyze→refine pass the UI drives as one action; the equivalent of `ClassifyLibrary` for the audio path. Halts the run on an environmental failure (download off, `yt-dlp` missing) instead of repeating it per track
+- [X] T058d [US4] Energy→role banding decided with the user: `Closing` (0–19) < `Warmup` (20–44) < `Groove` (45–69) < `Peak` (70–100). Energy is one scalar but the roles encode set position, so warmup and closing are not separable by measurement; the band order is a documented judgement, overridable in triage
+
+**Checkpoint**: DJ-grade metadata (BPM/key/energy) attached; crates gain energy roles. ✅ Reached —
+`cargo test --workspace` (148) green offline; `cargo test -p adapters --features real-adapters
+--test audio_analyzer_contract` (7) green against the real FFI: a C-major triad reads as Camelot 8B,
+a 120 BPM click track as ~120 confident, silence as `Silence`, and analysis is deterministic.
 
 ---
 
@@ -244,6 +257,6 @@ Foundational is done — they touch different files — but US5 must follow US4.
 
 ## Task Summary
 
-- **Total**: 78 tasks. Setup 6 · Foundational 18 · US1 14 · US2 14 · US4 11 · US5 6 · Polish 9.
+- **Total**: 82 tasks. Setup 6 · Foundational 18 · US1 14 · US2 14 · US4 15 · US5 6 · Polish 9.
 - **Test tasks**: contract + unit + integration throughout (constitution Principle VI).
 - **MVP scope**: T001–T038 (Setup + Foundational + US1).

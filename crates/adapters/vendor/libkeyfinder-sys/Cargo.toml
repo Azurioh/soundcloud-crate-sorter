@@ -1,0 +1,56 @@
+# VENDORED THIRD-PARTY CRATE — not project code (T053).
+#
+# Upstream: libkeyfinder-sys 0.1.0 — https://github.com/evanpurkhiser/libkeyfinder-sys
+# Author:   Evan Purkhiser <evanpurkhiser@gmail.com>
+# License:  GPL-3.0-or-later (unchanged — see LICENSE)
+#
+# Why vendored (research.md R4): upstream is a single-author 0.1.0 crate (~200 downloads, no second
+# release). It is also the only Rust binding to libKeyFinder — the key detector Mixxx ships, and the
+# one the constitution's "never AI-guess a key" rule (Principle I) rests on. A yank or a deleted repo
+# would take the entire audio path down with it, so the source lives here instead of in the registry.
+#
+# Fork changes vs upstream (keep this list exhaustive so diffing a future upstream stays cheap):
+#   1. edition 2024 -> 2021: keeps the workspace MSRV (1.80) honest; the source uses no 2024 feature.
+#   2. crate-type ["cdylib", "rlib"] -> ["rlib"]: the cdylib is a dead artifact here — this crate is
+#      only ever linked into our own Rust binary, never loaded as a C shared library.
+#   3. `publish = false`: a vendored fork must never be published from this workspace.
+#   4. build.rs: a missing libkeyfinder now fails with an actionable install hint (see build.rs).
+#   5. A `[lints]` table (below) exempting this crate from one clippy lint the project denies.
+#   6. `doctest = false` (below).
+# src/lib.rs, src/bridge.cpp and src/bridge.h are byte-for-byte upstream.
+[package]
+name = "libkeyfinder-sys"
+version = "0.1.0"
+edition = "2021"
+authors = ["Evan Purkhiser <evanpurkhiser@gmail.com>"]
+description = "Rust bindings to libkeyfinder - musical key detection for audio"
+repository = "https://github.com/evanpurkhiser/libkeyfinder-sys"
+license = "GPL-3.0-or-later"
+keywords = ["audio", "music", "key-detection", "keyfinder"]
+categories = ["multimedia::audio", "api-bindings"]
+readme = "README.md"
+publish = false
+
+[dependencies]
+cxx = "1.0"
+
+[build-dependencies]
+cxx-build = "1.0"
+pkg-config = "0.3.32"
+
+[lib]
+crate-type = ["rlib"]
+# One of upstream's doc examples does not compile (it uses `samples` after moving it into
+# `collect()`), so `cargo test --workspace` fails on documentation we neither wrote nor ship. Editing
+# src/lib.rs to fix their prose would forfeit the byte-for-byte-upstream property that makes a future
+# update a clean diff, and the example is illustrative — the binding's real behavior is covered by
+# our own tests in `libkeyfinder_aubio_audio_analyzer` and the `real-adapters` contract suite.
+doctest = false
+
+# The project's clean-build gate is `cargo clippy --workspace -- -D warnings`, which would otherwise
+# hold this third-party source to a standard it never agreed to and fail the build on code we do not
+# own. Scoping the exemption here (rather than editing src/lib.rs) keeps the source byte-for-byte
+# upstream. `KeyFinderKey::from_u32` transmutes a u32 into the key enum behind a `value <= 24` guard
+# whose arms carry explicit discriminants — the lint asks for a turbofish, not for a missing check.
+[lints.clippy]
+missing_transmute_annotations = "allow"

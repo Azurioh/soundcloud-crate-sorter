@@ -27,6 +27,11 @@ export interface TrackView {
   confidence: number | null;
   status: string;
   bpm: number | null;
+  /**
+   * Whether the BPM is ambiguous with its half/double. Always render the number *with* this doubt —
+   * a bare BPM the analyzer distrusted is the silent mis-tagging FR-031 exists to prevent.
+   */
+  bpm_uncertain: boolean;
   camelot_key: string | null;
   energy: number | null;
 }
@@ -98,6 +103,21 @@ export interface ThresholdSplit {
 export interface Settings {
   confidence_threshold: number;
   download_enabled: boolean;
+  /** Where downloaded audio is written — shown at the opt-in gate. */
+  download_dir: string;
+}
+
+/** Result of an audio-enrichment run (US4). */
+export interface AnalyzeResult {
+  downloaded: number;
+  already_present: number;
+  analyzed: number;
+  refined: number;
+  sent_to_triage: number;
+  preserved_manual: number;
+  skipped: number;
+  /** Why the run stopped early, if it did — already phrased as an actionable sentence. */
+  halted_reason: string | null;
 }
 
 /**
@@ -173,4 +193,14 @@ export function previewThreshold(threshold: number): Promise<ThresholdSplit> {
 /** Commits a threshold and re-routes the library, preserving manual decisions. */
 export function updateThreshold(threshold: number): Promise<ThresholdSplit> {
   return invoke<ThresholdSplit>("update_threshold", { threshold });
+}
+
+/** Records the user's opt-in choice for audio download (off by default). */
+export function setDownloadEnabled(enabled: boolean): Promise<Settings> {
+  return invoke<Settings>("set_download_enabled", { enabled });
+}
+
+/** Runs the opt-in audio path: download → analyze → re-file by energy role. */
+export function analyzeLibrary(): Promise<AnalyzeResult> {
+  return invoke<AnalyzeResult>("analyze_library");
 }

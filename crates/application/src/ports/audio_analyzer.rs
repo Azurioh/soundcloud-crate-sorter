@@ -1,34 +1,37 @@
-//! `AudioAnalyzerPort` — deterministic BPM/key/energy (User Story 4; adapter added in US4).
+//! `AudioAnalyzerPort` — deterministic BPM/key/energy (User Story 4).
 
 use std::path::Path;
 
 use thiserror::Error;
 
-use domain::camelot_key::CamelotKey;
-use domain::confidence::Energy;
+use domain::audio::AudioFeatures;
 
-/// Deterministic audio features. `key` is `None` when no key is detectable (SILENCE), never fabricated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AudioFeatures {
-    /// Beats per minute (aubio).
-    pub bpm: u16,
-    /// Camelot key (libKeyFinder), or `None` if undetectable.
-    pub key: Option<CamelotKey>,
-    /// Normalized energy (RMS/loudness).
-    pub energy: Energy,
-}
+use crate::ports::BoxError;
 
-/// Failure analyzing audio.
+/// Failure analyzing audio. Per-track failure is a reported skip — never a run-stopper
+/// (constitution Principle III).
 #[derive(Debug, Error)]
 pub enum AnalyzeError {
-    /// The file could not be decoded to PCM.
+    /// The file could not be decoded to PCM (unsupported/corrupt container or codec).
     #[error("audio decode error")]
-    Decode,
-    /// The analysis stage failed.
+    Decode {
+        /// The wrapped lower-level error.
+        #[source]
+        source: BoxError,
+    },
+    /// Decoding succeeded but the analysis stage failed.
     #[error("audio analysis error")]
-    Analysis,
-    /// No detectable key (key omitted, not fabricated).
-    #[error("no detectable key (silence)")]
+    Analysis {
+        /// The wrapped lower-level error.
+        #[source]
+        source: BoxError,
+    },
+    /// The file holds no analyzable audio at all (silence): there is no tempo and no energy to
+    /// report, so nothing is returned rather than a fabricated zero.
+    ///
+    /// Note this is *not* the "no detectable key" case — a track with a beat but no clear tonal
+    /// centre analyzes fine and simply carries `key: None` in its [`AudioFeatures`].
+    #[error("no analyzable audio (silence)")]
     Silence,
 }
 
@@ -38,6 +41,7 @@ pub trait AudioAnalyzerPort: Send + Sync {
     /// Analyzes the audio at `audio_path`.
     ///
     /// # Errors
-    /// [`AnalyzeError::Decode`] / [`AnalyzeError::Analysis`] / [`AnalyzeError::Silence`].
+    /// [`AnalyzeError::Decode`] if the file cannot be decoded, [`AnalyzeError::Analysis`] if
+    /// analysis fails, [`AnalyzeError::Silence`] if the file holds no analyzable audio.
     fn analyze(&self, audio_path: &Path) -> Result<AudioFeatures, AnalyzeError>;
 }

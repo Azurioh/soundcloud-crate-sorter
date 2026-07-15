@@ -10,5 +10,7 @@ pub mod in_memory_decision_repository;
 pub mod in_memory_settings_repository;
 pub mod in_memory_track_repository;
 pub mod seq_id_provider;
+pub mod stub_audio_analyzer;
+pub mod stub_audio_downloader;
 pub mod stub_genre_vibe_classifier;
 pub mod stub_likes_source;

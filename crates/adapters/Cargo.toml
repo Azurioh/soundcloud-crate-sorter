@@ -16,7 +16,15 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 reqwest = { version = "0.13.3", features = ["json", "query"] }
-tokio = { version = "1.52.3", features = ["time"] }
+tokio = { version = "1.52.3", features = ["time", "process", "fs"] }
+# --- Audio analysis (US4). All three are confined to the analyzer/downloader adapters. ---
+# Decodes to f32 PCM ourselves so the analyzer's input is a known quantity (research.md R4).
+symphonia = { version = "0.6.0", features = ["mp3", "aac", "isomp4", "wav", "flac", "ogg", "vorbis"] }
+# Deterministic BPM. `bindgen` because aubio-sys ships no aarch64-darwin bindings; `shared` +
+# `pkg-config` link Homebrew's libaubio rather than building a copy. See .cargo/config.toml.
+aubio-rs = { version = "0.2.0", features = ["bindgen", "shared", "pkg-config"] }
+# Deterministic key. Vendored fork — see vendor/libkeyfinder-sys/README.md (research.md R4).
+libkeyfinder-sys = { path = "vendor/libkeyfinder-sys" }
 
 [features]
 # Enables contract tests that exercise the REAL adapters (network / API key / system libs).
@@ -25,3 +33,4 @@ real-adapters = []
 
 [dev-dependencies]
 tokio = { version = "1.52.3", features = ["macros", "rt", "rt-multi-thread"] }
+tempfile = "3.27.0"

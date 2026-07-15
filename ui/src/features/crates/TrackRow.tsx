@@ -3,6 +3,7 @@ import { trackAudit, type AuditEvent, type TrackView } from "@/shared/api";
 import { toMessage } from "@/shared/errors";
 import { statusToBadge } from "@/shared/display/track-status";
 import { confidenceTone } from "@/shared/display/confidence-tone";
+import { AudioFeatures } from "@/shared/display/AudioFeatures";
 import { ToneBadge } from "@/shared/ui/tone-badge";
 import { Button } from "@/shared/ui/button";
 import { TableCell, TableRow } from "@/shared/ui/table";
@@ -44,6 +45,9 @@ export function TrackRow({ track }: { track: TrackView }) {
         <TableCell className="font-medium">{track.title}</TableCell>
         <TableCell className="text-muted-foreground">{track.artist}</TableCell>
         <TableCell>
+          <AudioFeatures track={track} />
+        </TableCell>
+        <TableCell>
           <ToneBadge tone={confidence.tone} className="font-mono tabular-nums">
             {confidence.label}
           </ToneBadge>
@@ -59,7 +63,7 @@ export function TrackRow({ track }: { track: TrackView }) {
       </TableRow>
       {open && (
         <TableRow className="bg-muted/50 hover:bg-muted/50">
-          <TableCell colSpan={5}>
+          <TableCell colSpan={6}>
             <AuditCell loading={loading} auditError={auditError} events={events} onRetry={() => void load()} />
           </TableCell>
         </TableRow>

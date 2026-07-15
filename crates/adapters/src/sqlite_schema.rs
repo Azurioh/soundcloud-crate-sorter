@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     permalink_url    TEXT NOT NULL,
     artwork_url      TEXT,
     bpm              INTEGER,
+    tempo_ambiguity  TEXT,
     camelot_key      TEXT,
     energy           INTEGER,
     vibe_tags        TEXT NOT NULL DEFAULT '[]',
@@ -84,6 +85,15 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 ";
 
+/// Columns added to `tracks` after the first schema shipped. `CREATE TABLE IF NOT EXISTS` is a
+/// no-op on a database that already exists, so a new column reaches an existing library only via an
+/// explicit `ALTER TABLE` — without this, upgrading to the audio path (US4) would leave every
+/// pre-existing database missing `tempo_ambiguity` and every query against it failing.
+///
+/// Each entry is `(column, definition)` and MUST be **additive**: a new nullable column, or one with
+/// a default. Never a `DROP`, never a retype — the user's library is irreplaceable (Principle IV).
+const TRACK_COLUMN_MIGRATIONS: &[(&str, &str)] = &[("tempo_ambiguity", "TEXT")];
+
 /// The application's SQLite database: owns the shared connection and applies migrations on open.
 #[derive(Clone)]
 pub struct SqliteDatabase {
@@ -112,6 +122,7 @@ impl SqliteDatabase {
     /// Applies the schema to `connection` and wraps it in the shared handle.
     fn from_connection(connection: Connection) -> rusqlite::Result<Self> {
         connection.execute_batch(SCHEMA_SQL)?;
+        apply_track_column_migrations(&connection)?;
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
         })
@@ -121,5 +132,87 @@ impl SqliteDatabase {
     #[must_use]
     pub fn connection(&self) -> SharedConnection {
         Arc::clone(&self.connection)
+    }
+}
+
+/// Adds any [`TRACK_COLUMN_MIGRATIONS`] column the `tracks` table is missing. Idempotent: a fresh
+/// database already has them from the DDL and this does nothing.
+fn apply_track_column_migrations(connection: &Connection) -> rusqlite::Result<()> {
+    let existing = track_column_names(connection)?;
+    for (column, definition) in TRACK_COLUMN_MIGRATIONS {
+        if !existing.iter().any(|name| name == column) {
+            connection.execute_batch(&format!(
+                "ALTER TABLE tracks ADD COLUMN {column} {definition}"
+            ))?;
+        }
+    }
+    Ok(())
+}
+
+/// Reads the `tracks` table's current column names from SQLite's own catalog.
+fn track_column_names(connection: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut statement = connection.prepare("SELECT name FROM pragma_table_info('tracks')")?;
+    let mut names = Vec::new();
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        names.push(row.get::<_, String>(0)?);
+    }
+    Ok(names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A library created before the audio path existed must gain the column rather than break: the
+    /// user's tracks and their triage decisions live in that file.
+    #[test]
+    fn migrates_a_database_created_before_the_column_existed() {
+        let connection = Connection::open_in_memory().expect("open");
+        // The pre-US4 shape: everything except `tempo_ambiguity`.
+        connection
+            .execute_batch(
+                "CREATE TABLE tracks (
+                    id TEXT PRIMARY KEY,
+                    source_track_id TEXT NOT NULL UNIQUE,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL,
+                    duration_ms INTEGER NOT NULL,
+                    permalink_url TEXT NOT NULL,
+                    status TEXT NOT NULL
+                );
+                INSERT INTO tracks VALUES ('t1', 'sc:1', 'Title', 'Artist', 1, 'https://x', 'scanned');",
+            )
+            .expect("seed legacy schema");
+
+        apply_track_column_migrations(&connection).expect("migrate");
+
+        assert!(track_column_names(&connection)
+            .expect("columns")
+            .iter()
+            .any(|name| name == "tempo_ambiguity"));
+        let preserved: String = connection
+            .query_row("SELECT title FROM tracks WHERE id = 't1'", [], |row| {
+                row.get(0)
+            })
+            .expect("existing row survives the migration");
+        assert_eq!(preserved, "Title");
+    }
+
+    /// Opening the same database twice must not try to add the column a second time.
+    #[test]
+    fn migration_is_idempotent_on_a_current_database() {
+        let database = SqliteDatabase::open_in_memory().expect("open");
+        let connection = database.connection();
+        let guard = connection.lock().expect("lock");
+
+        apply_track_column_migrations(&guard).expect("re-running migrations is a no-op");
+
+        let ambiguity_columns = track_column_names(&guard)
+            .expect("columns")
+            .iter()
+            .filter(|name| *name == "tempo_ambiguity")
+            .count();
+        assert_eq!(ambiguity_columns, 1);
     }
 }

@@ -1,0 +1,18 @@
+# Cargo configuration for the audio-analysis native build (User Story 4).
+#
+# The metadata-only MVP (US1/US2) needs none of this — it is pure Rust. Only the analyzer adapter's
+# native dependencies (aubio, libKeyFinder) do.
+
+[env]
+# `aubio-sys` generates its bindings with bindgen from `#include <aubio.h>`, i.e. it expects the
+# include directory to BE aubio's own header directory. Homebrew instead installs the headers one
+# level down (`include/aubio/aubio.h`) and its aubio.pc advertises the parent (`-I.../include`), so
+# the pkg-config include path the build script passes to bindgen never resolves the header and the
+# build dies with "'aubio.h' file not found". Handing bindgen the nested directory bridges the two
+# conventions. (Ordinary pkg-config linking is unaffected — this is a bindgen/header-search issue.)
+#
+# `force = false` so a real environment variable still wins: a non-default Homebrew prefix or a
+# non-Homebrew aubio only needs `BINDGEN_EXTRA_CLANG_ARGS=-I<its include dir>` in the shell, with no
+# edit here. The value below is the standard Apple-Silicon Homebrew prefix, which is what
+# scripts/check-system-libs.sh verifies and what the README documents.
+BINDGEN_EXTRA_CLANG_ARGS = { value = "-I/opt/homebrew/opt/aubio/include/aubio", force = false }

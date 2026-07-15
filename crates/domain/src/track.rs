@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use uuid::Uuid;
 
+use crate::audio::{AudioFeatures, TempoAmbiguity};
 use crate::camelot_key::CamelotKey;
 use crate::confidence::{Confidence, Energy};
 use crate::crate_::CrateId;
@@ -110,6 +111,7 @@ pub struct Track {
     permalink_url: String,
     artwork_url: Option<String>,
     bpm: Option<u16>,
+    tempo_ambiguity: Option<TempoAmbiguity>,
     camelot_key: Option<CamelotKey>,
     energy: Option<Energy>,
     vibe_tags: Vec<String>,
@@ -141,6 +143,8 @@ pub struct TrackRecord {
     pub artwork_url: Option<String>,
     /// BPM, if analyzed.
     pub bpm: Option<u16>,
+    /// How trustworthy that BPM is; `None` when the track was never analyzed.
+    pub tempo_ambiguity: Option<TempoAmbiguity>,
     /// Camelot key, if analyzed.
     pub camelot_key: Option<CamelotKey>,
     /// Energy, if analyzed.
@@ -171,6 +175,7 @@ impl Track {
             permalink_url: record.permalink_url,
             artwork_url: record.artwork_url,
             bpm: record.bpm,
+            tempo_ambiguity: record.tempo_ambiguity,
             camelot_key: record.camelot_key,
             energy: record.energy,
             vibe_tags: record.vibe_tags,
@@ -196,6 +201,7 @@ impl Track {
             permalink_url: liked.permalink_url,
             artwork_url: liked.artwork_url,
             bpm: None,
+            tempo_ambiguity: None,
             camelot_key: None,
             energy: None,
             vibe_tags: Vec::new(),
@@ -258,10 +264,44 @@ impl Track {
         }
     }
 
+    /// Returns a copy carrying the audio downloaded to `path` (US4, opt-in). Downloading enriches a
+    /// track; it decides nothing, so the lifecycle status is untouched.
+    #[must_use]
+    pub fn downloaded(&self, path: PathBuf) -> Self {
+        Self {
+            local_audio_path: Some(path),
+            ..self.clone()
+        }
+    }
+
+    /// Returns a copy carrying the deterministic analysis of its audio (US4).
+    ///
+    /// Only measurements are written: routing an uncertain tempo to triage (FR-031) and refining a
+    /// crate by energy role (FR-029) are the use case's decisions, not the entity's — which is why
+    /// this leaves `status`, `crate_id` and `confidence` alone.
+    #[must_use]
+    pub fn analyzed(&self, features: AudioFeatures) -> Self {
+        Self {
+            bpm: Some(features.bpm),
+            tempo_ambiguity: Some(features.tempo_ambiguity),
+            camelot_key: features.key,
+            energy: Some(features.energy),
+            ..self.clone()
+        }
+    }
+
     /// Whether a human has already decided this track (must not be re-presented, FR-018).
     #[must_use]
     pub fn is_manually_decided(&self) -> bool {
         matches!(self.status, TrackStatus::ManuallyDecided)
+    }
+
+    /// Whether the detected tempo is too ambiguous to tag unattended (FR-031). `false` for a track
+    /// that was never analyzed — there is no uncertain BPM to warn about when there is no BPM.
+    #[must_use]
+    pub fn has_uncertain_tempo(&self) -> bool {
+        self.tempo_ambiguity
+            .is_some_and(TempoAmbiguity::is_uncertain)
     }
 
     // --- Accessors (map to persistence columns at the adapter edge) ---
@@ -318,6 +358,12 @@ impl Track {
     #[must_use]
     pub const fn bpm(&self) -> Option<u16> {
         self.bpm
+    }
+
+    /// How trustworthy the detected BPM is (`None` until analyzed).
+    #[must_use]
+    pub const fn tempo_ambiguity(&self) -> Option<TempoAmbiguity> {
+        self.tempo_ambiguity
     }
 
     /// Detected Camelot key (present only after audio analysis).
@@ -421,5 +467,73 @@ mod tests {
         let crate_id = CrateId::from_uuid(Uuid::nil());
         assert!(track().assigned_manual(crate_id).is_manually_decided());
         assert!(!track().is_manually_decided());
+    }
+
+    fn features(tempo_ambiguity: TempoAmbiguity, key: Option<CamelotKey>) -> AudioFeatures {
+        AudioFeatures {
+            bpm: 128,
+            tempo_ambiguity,
+            key,
+            energy: Energy::new(80).unwrap(),
+        }
+    }
+
+    #[test]
+    fn downloaded_records_the_path_without_touching_the_lifecycle() {
+        let decided = track().assigned_manual(CrateId::from_uuid(Uuid::nil()));
+        let with_audio = decided.downloaded(PathBuf::from("/tmp/a.mp3"));
+
+        assert_eq!(
+            with_audio.local_audio_path(),
+            Some(&PathBuf::from("/tmp/a.mp3"))
+        );
+        assert_eq!(with_audio.status(), TrackStatus::ManuallyDecided);
+    }
+
+    #[test]
+    fn analyzed_writes_every_measured_feature() {
+        let key = CamelotKey::new(8, crate::camelot_key::CamelotLetter::B).unwrap();
+        let t = track().analyzed(features(TempoAmbiguity::Confident, Some(key)));
+
+        assert_eq!(t.bpm(), Some(128));
+        assert_eq!(t.camelot_key(), Some(key));
+        assert_eq!(t.energy().map(Energy::value), Some(80));
+        assert_eq!(t.tempo_ambiguity(), Some(TempoAmbiguity::Confident));
+    }
+
+    /// An undetectable key is absent, never a stand-in value (Principle I).
+    #[test]
+    fn analyzed_leaves_an_undetectable_key_absent() {
+        let t = track().analyzed(features(TempoAmbiguity::Confident, None));
+        assert_eq!(t.camelot_key(), None);
+        assert_eq!(t.bpm(), Some(128), "the rest of the analysis still lands");
+    }
+
+    /// Analysis measures; it must not re-decide. A track a human already filed keeps its crate and
+    /// its `ManuallyDecided` status (FR-029, Principle IV) — only the use case may move it, and only
+    /// with confirmation.
+    #[test]
+    fn analyzed_never_reopens_a_human_decision() {
+        let crate_id = CrateId::from_uuid(Uuid::from_u128(7));
+        let decided = track().assigned_manual(crate_id);
+
+        let analyzed = decided.analyzed(features(TempoAmbiguity::HalfOrDoubleTime, None));
+
+        assert_eq!(analyzed.status(), TrackStatus::ManuallyDecided);
+        assert_eq!(analyzed.crate_id(), Some(&crate_id));
+    }
+
+    #[test]
+    fn uncertain_tempo_flag_tracks_the_analysis() {
+        assert!(
+            !track().has_uncertain_tempo(),
+            "never analyzed, no BPM to doubt"
+        );
+        assert!(!track()
+            .analyzed(features(TempoAmbiguity::Confident, None))
+            .has_uncertain_tempo());
+        assert!(track()
+            .analyzed(features(TempoAmbiguity::HalfOrDoubleTime, None))
+            .has_uncertain_tempo());
     }
 }

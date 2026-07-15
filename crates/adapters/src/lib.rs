@@ -4,6 +4,7 @@
 
 pub mod anthropic_genre_vibe_classifier;
 pub mod internal_api_likes_source;
+pub mod libkeyfinder_aubio_audio_analyzer;
 pub mod sqlite_audit_log;
 pub mod sqlite_crate_repository;
 pub mod sqlite_decision_repository;
@@ -13,3 +14,4 @@ pub mod sqlite_support;
 pub mod sqlite_track_repository;
 pub mod system_clock_provider;
 pub mod uuid_id_provider;
+pub mod ytdlp_audio_downloader;

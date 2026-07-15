@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use application::ports::repo_error::RepoError;
 use application::ports::track_repository::TrackRepository;
 use async_trait::async_trait;
+use domain::audio::TempoAmbiguity;
 use domain::camelot_key::CamelotKey;
 use domain::confidence::{Confidence, Energy};
 use domain::crate_::CrateId;
@@ -23,8 +24,8 @@ const MANUALLY_DECIDED_TOKEN: &str = "manually_decided";
 
 /// Column list shared by every SELECT, in the order [`read_raw_row`] expects.
 const SELECT_COLUMNS: &str = "id, source_track_id, title, artist, source_genre, duration_ms, \
-    permalink_url, artwork_url, bpm, camelot_key, energy, vibe_tags, crate_id, confidence, status, \
-    local_audio_path";
+    permalink_url, artwork_url, bpm, tempo_ambiguity, camelot_key, energy, vibe_tags, crate_id, \
+    confidence, status, local_audio_path";
 
 /// A track row as raw SQLite primitives, before domain parsing.
 struct RawTrackRow {
@@ -37,6 +38,7 @@ struct RawTrackRow {
     permalink_url: String,
     artwork_url: Option<String>,
     bpm: Option<i64>,
+    tempo_ambiguity: Option<String>,
     camelot_key: Option<String>,
     energy: Option<i64>,
     vibe_tags: String,
@@ -154,8 +156,9 @@ impl SqliteTrackRepository {
 /// against a second internal id claiming an existing source id (surfaces as `Constraint`).
 const UPSERT_SQL: &str = "
 INSERT INTO tracks (id, source_track_id, title, artist, source_genre, duration_ms, permalink_url,
-    artwork_url, bpm, camelot_key, energy, vibe_tags, crate_id, confidence, status, local_audio_path)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+    artwork_url, bpm, tempo_ambiguity, camelot_key, energy, vibe_tags, crate_id, confidence, status,
+    local_audio_path)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
 ON CONFLICT(id) DO UPDATE SET
     source_track_id = excluded.source_track_id,
     title           = excluded.title,
@@ -165,6 +168,7 @@ ON CONFLICT(id) DO UPDATE SET
     permalink_url   = excluded.permalink_url,
     artwork_url     = excluded.artwork_url,
     bpm             = excluded.bpm,
+    tempo_ambiguity = excluded.tempo_ambiguity,
     camelot_key     = excluded.camelot_key,
     energy          = excluded.energy,
     vibe_tags       = excluded.vibe_tags,
@@ -195,6 +199,9 @@ fn track_params(
         track
             .bpm()
             .map_or(Value::Null, |b| Value::Integer(i64::from(b))),
+        track
+            .tempo_ambiguity()
+            .map_or(Value::Null, |a| Value::Text(a.as_str().to_owned())),
         track
             .camelot_key()
             .map_or(Value::Null, |k| Value::Text(k.to_string())),
@@ -235,13 +242,14 @@ fn read_raw_row(row: &Row<'_>) -> rusqlite::Result<RawTrackRow> {
         permalink_url: row.get(6)?,
         artwork_url: row.get(7)?,
         bpm: row.get(8)?,
-        camelot_key: row.get(9)?,
-        energy: row.get(10)?,
-        vibe_tags: row.get(11)?,
-        crate_id: row.get(12)?,
-        confidence: row.get(13)?,
-        status: row.get(14)?,
-        local_audio_path: row.get(15)?,
+        tempo_ambiguity: row.get(9)?,
+        camelot_key: row.get(10)?,
+        energy: row.get(11)?,
+        vibe_tags: row.get(12)?,
+        crate_id: row.get(13)?,
+        confidence: row.get(14)?,
+        status: row.get(15)?,
+        local_audio_path: row.get(16)?,
     })
 }
 
@@ -284,6 +292,16 @@ fn raw_to_track(raw: RawTrackRow) -> Result<Track, RepoError> {
         .bpm
         .map(|b| u16::try_from(b).map_err(serialization))
         .transpose()?;
+    // An unreadable token is an error, not `Confident`: defaulting would launder a BPM the analyzer
+    // doubted into one the exporter tags without warning (FR-031).
+    let tempo_ambiguity = raw
+        .tempo_ambiguity
+        .map(|token| {
+            TempoAmbiguity::from_token(&token).ok_or_else(|| RepoError::Serialization {
+                source: "unknown tempo ambiguity".into(),
+            })
+        })
+        .transpose()?;
 
     Ok(Track::from_record(TrackRecord {
         id,
@@ -295,6 +313,7 @@ fn raw_to_track(raw: RawTrackRow) -> Result<Track, RepoError> {
         permalink_url: raw.permalink_url,
         artwork_url: raw.artwork_url,
         bpm,
+        tempo_ambiguity,
         camelot_key,
         energy,
         vibe_tags,
