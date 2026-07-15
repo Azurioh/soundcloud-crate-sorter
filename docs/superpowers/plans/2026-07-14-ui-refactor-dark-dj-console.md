@@ -1263,7 +1263,9 @@ Expected: PASS, zero warnings. If `TableHead` rejects the `scope` prop under str
 
 ```bash
 git add ui/src/features/crates
-git commit -m "feat(ui): rebuild Crates browser with badges, skeleton, and empty state"
+git commit -m "feat(ui): rebuild Crates browser with badges, skeleton, and empty state
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -1316,8 +1318,27 @@ Invoke the `ui-fidelity-check` skill and complete its desktop + narrow-viewport 
 
 ```bash
 git add ui/src/styles.css
-git commit -m "chore(ui): remove dead legacy CSS after shadcn migration"
+git commit -m "chore(ui): remove dead legacy CSS after shadcn migration
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
+
+- [ ] **Step 6: Backfill the missing commit trailer across the branch**
+
+Earlier tasks' commit examples omitted the required trailer, so these four commits lack it:
+`fd6ab13`, `9f17566`, `ebd7c00`, `ab26b97` (verify the current list — SHAs shift as you rewrite).
+
+This is a message-only rewrite; no file content changes. The branch is NOT pushed, so rewriting is safe. Do it in ONE pass. `git rebase -i` is unavailable in this environment — use a non-interactive rewrite instead, for example:
+
+```bash
+git filter-branch -f --msg-filter '
+  cat;
+  git interpret-trailers --parse <<<"$(cat)" | grep -q "Co-Authored-By: Claude" \
+    || printf "\nCo-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>\n"
+' 02bc116..HEAD
+```
+
+Verify afterwards that EVERY commit in `02bc116..HEAD` has exactly one such trailer (no duplicates on the commits that already had it) and that `git diff 02bc116..HEAD` is byte-identical to before the rewrite (content must not change).
 
 ---
 
