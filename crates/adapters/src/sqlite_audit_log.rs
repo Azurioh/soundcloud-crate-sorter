@@ -73,7 +73,13 @@ impl AuditLogPort for SqliteAuditLog {
     async fn events_for_track(&self, track_id: &TrackId) -> Result<Vec<AuditEvent>, AuditError> {
         let conn = self.connection.lock().expect("sqlite mutex poisoned");
         let sql = format!(
-            "SELECT {SELECT_COLUMNS} FROM audit_events WHERE track_id = ?1 ORDER BY occurred_at ASC"
+            // `rowid` breaks ties: the classify and route events for one track are written
+            // microseconds apart and routinely share an `occurred_at` millisecond, and SQLite
+            // gives no stable order for equal sort keys. Without it the trail can read as though
+            // a track was filed before its genre was decided. `rowid` is insertion order; `id`
+            // would be wrong here (a random v4 UUID sorts arbitrarily).
+            "SELECT {SELECT_COLUMNS} FROM audit_events WHERE track_id = ?1 \
+             ORDER BY occurred_at ASC, rowid ASC"
         );
         let mut stmt = conn.prepare(&sql).map_err(io)?;
         let rows = stmt

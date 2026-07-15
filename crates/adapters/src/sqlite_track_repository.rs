@@ -179,7 +179,7 @@ fn track_params(
         Value::Text(track.title().to_owned()),
         Value::Text(track.artist().to_owned()),
         optional_text(track.source_genre().map(str::to_owned)),
-        Value::Integer(i64::try_from(track.duration_ms()).unwrap_or(i64::MAX)),
+        Value::Integer(i64::try_from(track.duration_ms()).map_err(serialization)?),
         Value::Text(track.permalink_url().to_owned()),
         optional_text(track.artwork_url().map(str::to_owned)),
         track
@@ -242,9 +242,15 @@ fn raw_to_track(raw: RawTrackRow) -> Result<Track, RepoError> {
         .camelot_key
         .map(|s| CamelotKey::parse(&s).map_err(serialization))
         .transpose()?;
+    // `try_from` rather than `unwrap_or(u8::MAX)`: the latter only errored by luck, because 255
+    // happens to exceed today's ENERGY_MAX of 100. Raise that ceiling to 255 and a corrupt `999`
+    // would silently land as a valid `Energy(255)` — a fabricated value. Propagate instead.
     let energy = raw
         .energy
-        .map(|e| Energy::new(u8::try_from(e).unwrap_or(u8::MAX)).map_err(serialization))
+        .map(|e| {
+            let raw_energy = u8::try_from(e).map_err(serialization)?;
+            Energy::new(raw_energy).map_err(serialization)
+        })
         .transpose()?;
     let confidence = raw
         .confidence

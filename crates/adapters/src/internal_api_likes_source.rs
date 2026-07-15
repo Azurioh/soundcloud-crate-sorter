@@ -8,7 +8,7 @@ use std::time::Duration;
 use application::ports::likes_source::{LikesSourceError, LikesSourcePort, SourceUserId};
 use async_trait::async_trait;
 use domain::track::LikedTrack;
-use reqwest::{Client, RequestBuilder, Response, StatusCode};
+use reqwest::{Client, RequestBuilder, Response, StatusCode, Url};
 use serde::Deserialize;
 use tokio::time::sleep;
 
@@ -28,6 +28,20 @@ const MAX_RETRIES: u32 = 3;
 const BASE_BACKOFF_MS: u64 = 1_000;
 /// Marker preceding a `client_id` in the web player's bundled JS.
 const CLIENT_ID_MARKER: &str = "client_id:\"";
+/// Total per-request budget. reqwest's async client has NO timeout by default: a peer that
+/// completes TLS and then stalls would hang a scan forever with no error ever surfaced.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Connection-establishment budget, kept well under `REQUEST_TIMEOUT`.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Builds the HTTP client used for every api-v2 / web-player call.
+fn build_client() -> Client {
+    Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+        .expect("HTTP client builds from static timeouts")
+}
 
 /// Reads public likes from the SoundCloud api-v2.
 pub struct InternalApiLikesSource {
@@ -40,7 +54,7 @@ impl InternalApiLikesSource {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            client: Client::new(),
+            client: build_client(),
             client_id: Mutex::new(None),
         }
     }
@@ -49,7 +63,7 @@ impl InternalApiLikesSource {
     #[must_use]
     pub fn with_client_id(client_id: String) -> Self {
         Self {
-            client: Client::new(),
+            client: build_client(),
             client_id: Mutex::new(Some(client_id)),
         }
     }
@@ -85,11 +99,18 @@ impl InternalApiLikesSource {
             .map_err(transport)?;
 
         // Script bundles are last in the document; scan them newest-first for the id.
+        // A single unreachable bundle must not abort the scan — bundles rotate, and an older one
+        // in the list may still carry a usable id — so failures skip to the next candidate and
+        // only an exhausted list is an error.
         let mut script_urls = extract_script_urls(&html);
         script_urls.reverse();
         for url in script_urls {
-            let script = self.client.get(&url).send().await.map_err(transport)?;
-            let body = script.text().await.map_err(transport)?;
+            let Ok(script) = self.client.get(&url).send().await else {
+                continue;
+            };
+            let Ok(body) = script.text().await else {
+                continue;
+            };
             if let Some(id) = extract_client_id_from_script(&body) {
                 return Ok(id);
             }
@@ -156,12 +177,19 @@ impl LikesSourcePort for InternalApiLikesSource {
 
     async fn list_likes(&self, user: &SourceUserId) -> Result<Vec<LikedTrack>, LikesSourceError> {
         let client_id = self.client_id().await?;
-        let first_url = format!(
-            "{API_BASE}/users/{}/likes/tracks?client_id={}&limit={}&linked_partitioning=1",
-            user.as_str(),
-            client_id,
-            LIKES_LIMIT
-        );
+        // Built via `parse_with_params`, not `format!`: an id carrying `#` would truncate the
+        // query (dropping `limit`/`linked_partitioning`, silently returning a short first page
+        // with no cursor) and an `&` would inject a parameter.
+        let first_url = Url::parse_with_params(
+            &format!("{API_BASE}/users/{}/likes/tracks", user.as_str()),
+            &[
+                ("client_id", client_id.as_str()),
+                ("limit", &LIKES_LIMIT.to_string()),
+                ("linked_partitioning", "1"),
+            ],
+        )
+        .map_err(transport)?
+        .to_string();
 
         let mut liked = Vec::new();
         let mut next_url = Some(first_url);
@@ -211,11 +239,19 @@ fn extract_script_urls(html: &str) -> Vec<String> {
 }
 
 /// Finds a `client_id:"…"` value inside a bundled script.
+///
+/// The marker is a naive scrape of third-party JS, so the captured span is validated before it is
+/// ever trusted as a query value: a real id is an opaque alphanumeric token, and anything else
+/// means the marker matched something that is not a client id.
 fn extract_client_id_from_script(script: &str) -> Option<String> {
     let start = script.find(CLIENT_ID_MARKER)? + CLIENT_ID_MARKER.len();
     let rest = &script[start..];
     let end = rest.find('"')?;
-    Some(rest[..end].to_owned())
+    let candidate = &rest[..end];
+    if candidate.is_empty() || !candidate.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some(candidate.to_owned())
 }
 
 /// Maps a SoundCloud track object onto the vendor-free `LikedTrack`.
@@ -261,7 +297,9 @@ struct TrackDto {
     title: Option<String>,
     #[serde(default)]
     genre: Option<String>,
-    #[serde(default)]
+    // Deliberately NOT `#[serde(default)]`: a defaulted 0 reads as "shorter than any mixable
+    // track" to the FR-030 duration heuristic, which auto-files the track into the review crate
+    // at high confidence. An absent duration must surface as a parse error, never a fabricated 0.
     duration: u64,
     #[serde(default)]
     permalink_url: Option<String>,
@@ -299,6 +337,27 @@ mod tests {
             extract_client_id_from_script(script).as_deref(),
             Some("AbC123xyz")
         );
+    }
+
+    /// A scraped span that is not an opaque alphanumeric token is not a client id. Accepting one
+    /// would put `#` or `&` into the likes query string, truncating or injecting parameters.
+    #[test]
+    fn rejects_client_id_containing_url_metacharacters() {
+        let script = r#"…,client_id:"abc#x",app_version…"#;
+        assert_eq!(extract_client_id_from_script(script), None);
+    }
+
+    /// A track object without `duration` must fail to parse. Defaulting it to 0 made the FR-030
+    /// heuristic read the track as non-music and auto-file it into the review crate at 0.95 —
+    /// a silent misfile sourced entirely from an absent field.
+    #[test]
+    fn track_without_duration_is_a_parse_error_not_a_zero() {
+        let json = r#"{"id":1,"title":"T","permalink_url":"u"}"#;
+        assert!(serde_json::from_str::<TrackDto>(json).is_err());
+
+        let with_duration = r#"{"id":1,"title":"T","permalink_url":"u","duration":180000}"#;
+        let track: TrackDto = serde_json::from_str(with_duration).expect("valid track parses");
+        assert_eq!(track_to_liked(track).duration_ms, 180_000);
     }
 
     #[test]

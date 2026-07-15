@@ -17,7 +17,9 @@ use thiserror::Error;
 use crate::audit_recorder::{AuditRecorder, RecordParams};
 use crate::ports::audit_log::AuditError;
 use crate::ports::crate_repository::CrateRepository;
-use crate::ports::genre_vibe_classifier::{ClassificationInput, GenreVibeClassifierPort};
+use crate::ports::genre_vibe_classifier::{
+    ClassificationInput, GenreCandidate, GenreVibeClassifierPort,
+};
 use crate::ports::repo_error::RepoError;
 
 /// Confidence assigned when the genre comes straight from the source tag.
@@ -143,7 +145,7 @@ impl ClassifyTrack {
             description: None,
         };
         match self.classifier.classify(&input).await {
-            Ok(suggestion) => match suggestion.candidates.into_iter().next() {
+            Ok(suggestion) => match most_confident(suggestion.candidates) {
                 Some(candidate) => GenreDecision {
                     genre: candidate.genre,
                     confidence: candidate.confidence,
@@ -194,6 +196,19 @@ impl ClassifyTrack {
 /// plausible single-track duration window.
 fn is_likely_non_music(duration_ms: u64) -> bool {
     !(MIN_MUSIC_DURATION_MS..=MAX_MUSIC_DURATION_MS).contains(&duration_ms)
+}
+
+/// Picks the highest-confidence candidate, or `None` when the classifier offered none.
+///
+/// The port documents candidates as "most-confident first", but that ordering is only ever a
+/// request made of a model in a prompt — nothing enforces it, and taking the first entry on faith
+/// means a reply of `[{Ambient, 0.7}, {Techno, 0.95}]` files the track as Ambient at 0.7: above
+/// the default threshold, so auto-filed, silently, into the genre the model ranked second.
+/// The use case owns the decision, so it selects rather than trusts.
+fn most_confident(candidates: Vec<GenreCandidate>) -> Option<GenreCandidate> {
+    candidates
+        .into_iter()
+        .max_by(|a, b| a.confidence.value().total_cmp(&b.confidence.value()))
 }
 
 /// The low-confidence "no genre determined" decision that routes a track to triage. `reason`
@@ -249,6 +264,29 @@ mod tests {
             }],
             vibe_tags: vec!["dark".into()],
         }
+    }
+
+    fn candidate(genre: &str, confidence: f32) -> GenreCandidate {
+        GenreCandidate {
+            genre: genre.to_owned(),
+            confidence: Confidence::new(confidence).unwrap(),
+        }
+    }
+
+    /// The "most-confident first" ordering is only ever asked of the model in a prompt; nothing
+    /// enforces it. Taking the first entry would file this track as Ambient at 0.7 — over the
+    /// default 0.6 threshold, so auto-filed into the genre the model ranked second.
+    #[test]
+    fn picks_the_highest_confidence_candidate_regardless_of_model_ordering() {
+        let picked = most_confident(vec![candidate("Ambient", 0.7), candidate("Techno", 0.95)])
+            .expect("a candidate is returned");
+        assert_eq!(picked.genre, "Techno");
+        assert_eq!(picked.confidence.value(), 0.95);
+    }
+
+    #[test]
+    fn no_candidates_yields_none() {
+        assert!(most_confident(vec![]).is_none());
     }
 
     struct Fixture {
