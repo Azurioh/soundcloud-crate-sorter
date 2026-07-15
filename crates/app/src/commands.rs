@@ -297,3 +297,124 @@ fn classify_error_message(error: ClassifyLibraryError) -> String {
 fn repo_message<E>(_error: E) -> String {
     "Could not read library data.".to_owned()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fmt;
+
+    use application::ports::likes_source::LikesSourceError;
+    use domain::track::TrackRecord;
+
+    use super::*;
+
+    /// Stands in for the `reqwest::Error` the likes adapter boxes into `Transport`. reqwest renders
+    /// the failing URL in its `Display`, and for this app that URL carries the resolve query with
+    /// the scraped `client_id`.
+    const SENSITIVE_URL: &str =
+        "https://api-v2.soundcloud.com/resolve?url=https://soundcloud.com/dj&client_id=abc123";
+
+    #[derive(Debug)]
+    struct UrlBearingError;
+
+    impl fmt::Display for UrlBearingError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "error sending request for url ({SENSITIVE_URL})")
+        }
+    }
+
+    impl std::error::Error for UrlBearingError {}
+
+    fn track_with_status(status: TrackStatus) -> Track {
+        Track::from_record(TrackRecord {
+            id: TrackId::from_uuid(Uuid::nil()),
+            source_track_id: "sc-1".to_owned(),
+            title: "Title".to_owned(),
+            artist: "Artist".to_owned(),
+            source_genre: None,
+            duration_ms: 180_000,
+            permalink_url: "https://soundcloud.com/artist/track".to_owned(),
+            artwork_url: None,
+            bpm: None,
+            camelot_key: None,
+            energy: None,
+            vibe_tags: Vec::new(),
+            crate_id: None,
+            confidence: None,
+            status,
+            local_audio_path: None,
+        })
+    }
+
+    #[test]
+    fn run_summary_counts_each_status_independently() {
+        let tracks = vec![
+            track_with_status(TrackStatus::Scanned),
+            track_with_status(TrackStatus::Scanned),
+            track_with_status(TrackStatus::InTriage),
+            track_with_status(TrackStatus::AutoClassified),
+            track_with_status(TrackStatus::ManuallyDecided),
+            track_with_status(TrackStatus::Deferred),
+        ];
+
+        let view = run_summary_view(&tracks, 3);
+
+        assert_eq!(view.total_tracks, 6);
+        assert_eq!(view.scanned, 2);
+        assert_eq!(view.in_triage, 1);
+        assert_eq!(view.auto_classified, 1);
+        assert_eq!(view.manually_decided, 1);
+        assert_eq!(view.deferred, 1);
+        assert_eq!(view.crate_count, 3);
+    }
+
+    #[test]
+    fn run_summary_of_an_empty_library_is_all_zeroes() {
+        let view = run_summary_view(&[], 0);
+
+        assert_eq!(view.total_tracks, 0);
+        assert_eq!(view.scanned, 0);
+        assert_eq!(view.in_triage, 0);
+        assert_eq!(view.auto_classified, 0);
+        assert_eq!(view.manually_decided, 0);
+        assert_eq!(view.deferred, 0);
+        assert_eq!(view.crate_count, 0);
+    }
+
+    /// The `Source` arm forwards `LikesSourceError`'s own `Display`, so this crate's secret-freedom
+    /// depends on every variant there keeping a constant message. Interpolating `{source}` into
+    /// `Transport` would pipe the resolve URL (and its `client_id`) into the UI; this test is what
+    /// catches that edit.
+    #[test]
+    fn scan_transport_failure_never_renders_the_wrapped_url() {
+        let error = ScanError::Source(LikesSourceError::Transport {
+            source: Box::new(UrlBearingError),
+        });
+
+        let message = scan_error_message(error);
+
+        assert!(
+            !message.contains("client_id"),
+            "the client_id leaked into a UI message: {message}"
+        );
+        assert!(
+            !message.contains("api-v2.soundcloud.com"),
+            "the internal API URL leaked into a UI message: {message}"
+        );
+        assert!(
+            !message.contains("soundcloud.com/dj"),
+            "the user's profile URL leaked into a UI message: {message}"
+        );
+    }
+
+    #[test]
+    fn scan_source_failures_stay_actionable() {
+        assert_eq!(
+            scan_error_message(ScanError::Source(LikesSourceError::ProfileNotFound)),
+            "SoundCloud profile not found"
+        );
+        assert_eq!(
+            scan_error_message(ScanError::Source(LikesSourceError::ProfilePrivate)),
+            "SoundCloud profile is private"
+        );
+    }
+}

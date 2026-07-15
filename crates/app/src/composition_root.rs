@@ -62,8 +62,9 @@ impl AppState {
         let recorder = Arc::new(AuditRecorder::new(audit_log.clone(), clock, ids.clone()));
 
         let likes_source = Arc::new(InternalApiLikesSource::new());
-        // The classifier is constructed even without a key; missing-key calls fail and the use case
-        // degrades them to a low-confidence fallback (routing the track to triage).
+        // Constructed even without a key: a classifier error degrades to a low-confidence fallback
+        // that routes the track to triage, never a guessed crate. Startup warns when the key is
+        // absent, because each classification then costs a rejected API round-trip.
         let classifier = Arc::new(AnthropicGenreVibeClassifier::new(
             config.api_key().unwrap_or_default().to_owned(),
         ));
