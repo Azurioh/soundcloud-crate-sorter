@@ -1,4 +1,4 @@
-import type { Tone } from "@/shared/ui/tone-badge";
+import type { Tone } from "@/shared/display/tone";
 
 /** Track statuses emitted by the core (mirrors the `status` string on TrackView). */
 export type KnownStatus =

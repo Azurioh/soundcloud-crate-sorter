@@ -33,7 +33,7 @@
   /* Semantic status/confidence tones */
   --success: #16a34a;
   --warning: #d97706;
-  --danger: #dc2626;
+  --danger: var(--destructive);
 }
 
 .dark {
@@ -60,7 +60,7 @@
 
   --success: #22c55e;
   --warning: #f59e0b;
-  --danger: #ef4444;
+  --danger: var(--destructive);
 }
 
 @theme inline {

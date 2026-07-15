@@ -22,10 +22,13 @@ interface RunControlProps {
   onLibraryChanged: () => void;
 }
 
+/** Which long-running action is in flight, if any — drives per-button spinner + shared disable state. */
+type RunAction = "scan" | "classify";
+
 /** Run panel: scan a profile, classify all, and show library counts. */
 export function RunControl({ onLibraryChanged }: RunControlProps) {
   const [profileUrl, setProfileUrl] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [running, setRunning] = useState<RunAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [classifyResult, setClassifyResult] = useState<ClassifyResult | null>(null);
@@ -44,7 +47,7 @@ export function RunControl({ onLibraryChanged }: RunControlProps) {
   }, [refreshSummary]);
 
   const handleScan = useCallback(async () => {
-    setBusy(true);
+    setRunning("scan");
     setError(null);
     try {
       setScanResult(await scan(profileUrl.trim()));
@@ -53,12 +56,12 @@ export function RunControl({ onLibraryChanged }: RunControlProps) {
     } catch (e) {
       setError(toMessage(e));
     } finally {
-      setBusy(false);
+      setRunning(null);
     }
   }, [profileUrl, refreshSummary, onLibraryChanged]);
 
   const handleClassify = useCallback(async () => {
-    setBusy(true);
+    setRunning("classify");
     setError(null);
     try {
       setClassifyResult(await classifyAll());
@@ -67,10 +70,11 @@ export function RunControl({ onLibraryChanged }: RunControlProps) {
     } catch (e) {
       setError(toMessage(e));
     } finally {
-      setBusy(false);
+      setRunning(null);
     }
   }, [refreshSummary, onLibraryChanged]);
 
+  const busy = running !== null;
   const canScan = profileUrl.trim().length > 0 && !busy;
 
   return (
@@ -92,14 +96,16 @@ export function RunControl({ onLibraryChanged }: RunControlProps) {
               value={profileUrl}
               onChange={(e) => setProfileUrl(e.target.value)}
               disabled={busy}
+              // min-w keeps a typical SoundCloud profile URL readable before the row wraps.
               className="min-w-[260px] flex-1 font-mono"
             />
             <Button type="button" onClick={handleScan} disabled={!canScan}>
-              {busy ? <Loader2 className="size-4 animate-spin" /> : null}
-              {busy ? "Working…" : "Scan"}
+              {running === "scan" ? <Loader2 className="size-4 animate-spin" /> : null}
+              {running === "scan" ? "Working…" : "Scan"}
             </Button>
             <Button type="button" variant="outline" onClick={handleClassify} disabled={busy}>
-              Classify all
+              {running === "classify" ? <Loader2 className="size-4 animate-spin" /> : null}
+              {running === "classify" ? "Working…" : "Classify all"}
             </Button>
           </div>
         </div>

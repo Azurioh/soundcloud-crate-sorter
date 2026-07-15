@@ -40,7 +40,7 @@ export function TrackRow({ track }: { track: TrackView }) {
 
   return (
     <>
-      <TableRow>
+      <TableRow className={open ? "bg-muted/50" : undefined}>
         <TableCell className="font-medium">{track.title}</TableCell>
         <TableCell className="text-muted-foreground">{track.artist}</TableCell>
         <TableCell>
@@ -58,7 +58,7 @@ export function TrackRow({ track }: { track: TrackView }) {
         </TableCell>
       </TableRow>
       {open && (
-        <TableRow className="bg-muted/40 hover:bg-muted/40">
+        <TableRow className="bg-muted/50 hover:bg-muted/50">
           <TableCell colSpan={5}>
             <AuditCell loading={loading} auditError={auditError} events={events} onRetry={() => void load()} />
           </TableCell>

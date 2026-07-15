@@ -1,4 +1,4 @@
-import type { Tone } from "@/shared/ui/tone-badge";
+import type { Tone } from "@/shared/display/tone";
 
 /** Confidence band cutoffs (fraction 0..1). High ≥ 0.85, mid ≥ 0.7, else low. */
 const CONFIDENCE_HIGH = 0.85;

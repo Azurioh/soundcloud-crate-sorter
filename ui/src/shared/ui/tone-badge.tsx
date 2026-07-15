@@ -1,9 +1,7 @@
 import type { ReactNode } from "react";
+import type { Tone } from "@/shared/display/tone";
 import { Badge } from "@/shared/ui/badge";
 import { cn } from "@/shared/lib/utils";
-
-/** Semantic tone for status/confidence chips. */
-export type Tone = "success" | "warning" | "danger" | "neutral" | "info";
 
 const TONE_CLASSES: Record<Tone, string> = {
   success: "bg-success/15 text-success border-success/30",
