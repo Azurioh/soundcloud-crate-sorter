@@ -4,6 +4,7 @@
 //! (error derives). It never imports a DB, HTTP, UI, or vendor SDK — the Dependency Rule is a
 //! compile-time guarantee.
 
+pub mod audio;
 pub mod audit;
 pub mod camelot_key;
 pub mod classification;

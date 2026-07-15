@@ -13,6 +13,9 @@ members = [
     "crates/application",
     "crates/adapters",
     "crates/app",
+    # Vendored third-party binding, not a layer (research.md R4 / T053). It sits behind
+    # `AudioAnalyzerPort`, so only `adapters` ever names it.
+    "crates/adapters/vendor/libkeyfinder-sys",
 ]
 
 [workspace.package]

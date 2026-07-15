@@ -7,16 +7,19 @@
 use std::collections::BTreeMap;
 
 use application::use_cases::adjust_threshold::{AdjustThresholdError, ThresholdSplit};
+use application::use_cases::analyze_library::{AnalyzeLibraryError, AnalyzeLibrarySummary};
 use application::use_cases::apply_manual_decision::{
     ApplyManualDecisionError, TriageAction, TriagedTrack,
 };
 use application::use_cases::classify_library::{ClassifyLibraryError, ClassifyLibrarySummary};
+use application::use_cases::download_audio::SkipReason;
 use application::use_cases::resume_deferred::ResumeDeferredError;
 use application::use_cases::scan_likes::{ScanError, ScanSummary};
 use domain::audit::{AuditEvent, RunId};
 use domain::classification::ClassificationDecision;
 use domain::confidence::ConfidenceThreshold;
 use domain::crate_::{Crate, CrateId};
+use domain::settings::Settings;
 use domain::track::{Track, TrackId, TrackStatus};
 use serde::{Deserialize, Serialize};
 use tauri::State;
@@ -65,10 +68,36 @@ pub struct TrackView {
     pub status: String,
     /// BPM, if analyzed.
     pub bpm: Option<u16>,
+    /// Whether that BPM is ambiguous with its half/double and must not be trusted unattended
+    /// (FR-031). The UI shows the number *and* the doubt — a BPM presented bare would be exactly
+    /// the silent mis-tagging the flag exists to prevent.
+    pub bpm_uncertain: bool,
     /// Camelot key (e.g. "8A"), if analyzed.
     pub camelot_key: Option<String>,
     /// Energy 0–100, if analyzed.
     pub energy: Option<u8>,
+}
+
+/// Result of an audio-enrichment run (US4).
+#[derive(Debug, Serialize)]
+pub struct AnalyzeResultView {
+    /// Tracks whose audio was fetched this run.
+    pub downloaded: usize,
+    /// Tracks that already had their audio.
+    pub already_present: usize,
+    /// Tracks that gained BPM/key/energy.
+    pub analyzed: usize,
+    /// Tracks re-filed into an energy sub-crate.
+    pub refined: usize,
+    /// Tracks sent to triage (sub-threshold, or an uncertain tempo).
+    pub sent_to_triage: usize,
+    /// Tracks left where a human had already filed them.
+    pub preserved_manual: usize,
+    /// Tracks that ended with no audio features.
+    pub skipped: usize,
+    /// Set when the run stopped early because no track could be downloaded — carries why, so the UI
+    /// can say "downloading is off" rather than "0 tracks analyzed".
+    pub halted_reason: Option<String>,
 }
 
 /// A crate plus its members.
@@ -163,6 +192,9 @@ pub struct SettingsView {
     pub confidence_threshold: f32,
     /// Whether opt-in audio download is enabled.
     pub download_enabled: bool,
+    /// Where downloaded audio would be written — shown at the opt-in gate so the user knows what
+    /// turning it on will put on their disk, and where.
+    pub download_dir: String,
 }
 
 /// A triage action as sent by the frontend. Mirrors the use case's `TriageAction` at the edge so no
@@ -372,7 +404,59 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<SettingsView, St
     Ok(SettingsView {
         confidence_threshold: settings.confidence_threshold().value(),
         download_enabled: settings.download_enabled(),
+        download_dir: state.analyze_library.download_dir().display().to_string(),
     })
+}
+
+/// Turns opt-in audio download on or off (FR-028, Principle V).
+///
+/// This is the *record* of the user's choice, not the enforcement of it: `DownloadAudio` re-reads
+/// the flag on every track, so flipping this off stops the next download even mid-run.
+///
+/// # Errors
+/// A neutral message string when the setting cannot be saved.
+#[tauri::command]
+pub async fn set_download_enabled(
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<SettingsView, String> {
+    let current = state.settings.load().await.map_err(repo_message)?;
+    let updated = Settings::new(
+        current.confidence_threshold(),
+        enabled,
+        current.export_mode(),
+    );
+    state
+        .settings
+        .save(&updated)
+        .await
+        .map_err(|_| "Could not save the download setting.".to_owned())?;
+    Ok(SettingsView {
+        confidence_threshold: updated.confidence_threshold().value(),
+        download_enabled: updated.download_enabled(),
+        download_dir: state.analyze_library.download_dir().display().to_string(),
+    })
+}
+
+/// Runs the opt-in audio path over the library: download → analyze → re-file by energy (US4).
+///
+/// Runs on a blocking thread: key detection and beat tracking are CPU-bound native work measured in
+/// seconds per track, and holding an async worker for that would stall every other command the
+/// webview issues — including the one that turns downloading back off.
+///
+/// # Errors
+/// A neutral message string when the library cannot be read or written. A track that cannot be
+/// downloaded or analyzed is counted in the summary, not raised (Principle III).
+#[tauri::command]
+pub async fn analyze_library(state: State<'_, AppState>) -> Result<AnalyzeResultView, String> {
+    let library = state.analyze_library.clone();
+    let summary = tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(library.execute())
+    })
+    .await
+    .map_err(|_| "The analysis run stopped unexpectedly.".to_owned())?
+    .map_err(analyze_error_message)?;
+    Ok(analyze_result_view(summary))
 }
 
 /// Previews the auto-versus-manual split for `threshold` without committing it (FR-013).
@@ -570,6 +654,48 @@ fn classify_result_view(summary: ClassifyLibrarySummary) -> ClassifyResultView {
     }
 }
 
+/// Maps an audio-enrichment summary onto its view.
+fn analyze_result_view(summary: AnalyzeLibrarySummary) -> AnalyzeResultView {
+    AnalyzeResultView {
+        downloaded: summary.downloaded,
+        already_present: summary.already_present,
+        analyzed: summary.analyzed,
+        refined: summary.refined,
+        sent_to_triage: summary.sent_to_triage,
+        preserved_manual: summary.preserved_manual,
+        skipped: summary.skipped,
+        halted_reason: summary.halted.map(halt_reason_message),
+    }
+}
+
+/// Turns an early stop into something actionable — each of these has a different fix.
+fn halt_reason_message(reason: SkipReason) -> String {
+    match reason {
+        SkipReason::DownloadDisabled => {
+            "Audio download is off — turn it on to analyze tracks.".to_owned()
+        }
+        SkipReason::ToolMissing => {
+            "yt-dlp is not installed. Install it (brew install yt-dlp) to download audio."
+                .to_owned()
+        }
+        SkipReason::Unavailable => "The tracks could not be downloaded.".to_owned(),
+        SkipReason::Io => "Could not write downloaded audio to disk.".to_owned(),
+    }
+}
+
+/// Neutral, secret-free message for an audio-enrichment failure.
+fn analyze_error_message(error: AnalyzeLibraryError) -> String {
+    match error {
+        AnalyzeLibraryError::Download(_) => "Could not save downloaded audio.".to_owned(),
+        AnalyzeLibraryError::Analyze(_) => "Could not save analysis results.".to_owned(),
+        AnalyzeLibraryError::Classify(_) => {
+            "Could not re-file a track after analyzing it.".to_owned()
+        }
+        AnalyzeLibraryError::Route(_) => "Could not route a track after analyzing it.".to_owned(),
+        AnalyzeLibraryError::Repo(_) => "Could not read or save library data.".to_owned(),
+    }
+}
+
 /// Maps a domain track onto its view.
 fn track_view(track: &Track) -> TrackView {
     TrackView {
@@ -580,6 +706,7 @@ fn track_view(track: &Track) -> TrackView {
         confidence: track.confidence().map(|c| c.value()),
         status: track.status().as_str().to_owned(),
         bpm: track.bpm(),
+        bpm_uncertain: track.has_uncertain_tempo(),
         camelot_key: track.camelot_key().map(|k| k.to_string()),
         energy: track.energy().map(|e| e.value()),
     }
@@ -694,6 +821,7 @@ mod tests {
             permalink_url: "https://soundcloud.com/artist/track".to_owned(),
             artwork_url: None,
             bpm: None,
+            tempo_ambiguity: None,
             camelot_key: None,
             energy: None,
             vibe_tags: Vec::new(),

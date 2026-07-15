@@ -38,6 +38,8 @@ pub fn run() {
             commands::get_settings,
             commands::preview_threshold,
             commands::update_threshold,
+            commands::set_download_enabled,
+            commands::analyze_library,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

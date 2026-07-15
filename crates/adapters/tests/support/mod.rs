@@ -6,6 +6,12 @@
 //! Each test binary uses only the suites it needs; the rest are dead code in that binary.
 #![allow(dead_code)]
 
+pub mod wav_fixture;
+
+use std::path::Path;
+
+use application::ports::audio_analyzer::AudioAnalyzerPort;
+use application::ports::audio_downloader::AudioDownloaderPort;
 use application::ports::audit_log::AuditLogPort;
 use application::ports::crate_repository::{CrateRepository, CrateSpec};
 use application::ports::decision_repository::DecisionRepository;
@@ -14,15 +20,17 @@ use application::ports::likes_source::LikesSourcePort;
 use application::ports::repo_error::RepoError;
 use application::ports::settings_repository::SettingsRepository;
 use application::ports::track_repository::TrackRepository;
+use domain::audio::{AudioFeatures, TempoAmbiguity};
 use domain::audit::{
     AuditDetail, AuditEvent, AuditEventId, AuditKind, AuditOutcome, NewAuditEvent, PipelineStage,
     RunId,
 };
+use domain::camelot_key::{CamelotKey, CamelotLetter};
 use domain::classification::{
     ClassificationDecision, ClassificationReason, DecisionId, DecisionSource, GenreSuggestion,
     NewDecision,
 };
-use domain::confidence::{Confidence, ConfidenceThreshold};
+use domain::confidence::{Confidence, ConfidenceThreshold, Energy};
 use domain::crate_::{CrateId, CrateOrigin};
 use domain::settings::{ExportMode, Settings};
 use domain::timestamp::Timestamp;
@@ -133,6 +141,69 @@ pub async fn track_repository_suite(repo: &dyn TrackRepository, existing_crate_i
         .await
         .expect("list by crate");
     assert!(members.iter().any(|t| t.id() == track.id()));
+
+    audio_features_round_trip(repo).await;
+}
+
+/// The audio-analysis half of the `TrackRepository` contract (US4): every measured feature must
+/// survive a save→load unchanged, including the doubt attached to an uncertain tempo (FR-031).
+///
+/// Analysis is expensive and deterministic, so a feature that does not round-trip is worse than one
+/// never measured: the run reports success and the library quietly holds nothing. The uncertain-tempo
+/// flag matters most — losing it would silently promote a BPM the analyzer distrusted into one the
+/// exporter tags as fact.
+async fn audio_features_round_trip(repo: &dyn TrackRepository) {
+    let analyzed = scanned_track(4, "sc:4")
+        .downloaded("/tmp/audio/sc-4.mp3".into())
+        .analyzed(AudioFeatures {
+            bpm: 128,
+            tempo_ambiguity: TempoAmbiguity::Confident,
+            key: Some(CamelotKey::new(8, CamelotLetter::B).expect("8B is on the wheel")),
+            energy: Energy::new(85).expect("85 is in range"),
+        });
+    repo.upsert(&analyzed).await.expect("upsert analyzed track");
+
+    let reloaded = repo
+        .find_by_id(analyzed.id())
+        .await
+        .expect("reload analyzed")
+        .expect("present");
+    assert_eq!(reloaded.bpm(), Some(128));
+    assert_eq!(
+        reloaded.camelot_key().map(|k| k.to_string()),
+        Some("8B".into())
+    );
+    assert_eq!(reloaded.energy().map(Energy::value), Some(85));
+    assert_eq!(reloaded.tempo_ambiguity(), Some(TempoAmbiguity::Confident));
+    assert!(!reloaded.has_uncertain_tempo());
+    assert_eq!(
+        reloaded.local_audio_path(),
+        Some(&std::path::PathBuf::from("/tmp/audio/sc-4.mp3"))
+    );
+
+    // The doubt itself must persist, not just the number it qualifies.
+    let uncertain = analyzed.analyzed(AudioFeatures {
+        bpm: 70,
+        tempo_ambiguity: TempoAmbiguity::HalfOrDoubleTime,
+        key: None,
+        energy: Energy::new(20).expect("20 is in range"),
+    });
+    repo.upsert(&uncertain).await.expect("upsert uncertain");
+
+    let reloaded = repo
+        .find_by_id(uncertain.id())
+        .await
+        .expect("reload uncertain")
+        .expect("present");
+    assert!(
+        reloaded.has_uncertain_tempo(),
+        "an uncertain tempo must not come back trusted"
+    );
+    assert_eq!(
+        reloaded.camelot_key(),
+        None,
+        "a track with no detectable key must not gain one on reload"
+    );
 }
 
 /// Builds a `CrateSpec` for a genre with no energy role, created by the pipeline.
@@ -370,6 +441,60 @@ pub async fn settings_repository_suite(repo: &dyn SettingsRepository) {
     assert_eq!(reloaded.export_mode(), ExportMode::SoundCloud);
     assert!(reloaded.download_enabled());
     assert!((reloaded.confidence_threshold().value() - 0.42).abs() < f32::EPSILON);
+}
+
+/// `AudioDownloaderPort` contract: a successful download leaves a real file inside `dest_dir` and
+/// returns its path.
+///
+/// The contract is deliberately about the *file*, not its contents: what a downloader owes its
+/// caller is "audio is now on disk, here". Whether those bytes decode is `AudioAnalyzerPort`'s
+/// business — which is why the in-memory fake can honor this suite without pretending to be an
+/// encoder.
+pub async fn audio_downloader_suite(
+    downloader: &dyn AudioDownloaderPort,
+    track: &Track,
+    dest_dir: &Path,
+) {
+    let audio = downloader
+        .download(track, dest_dir)
+        .await
+        .expect("download the track");
+
+    assert!(
+        audio.path.is_file(),
+        "the returned path must point at a file that exists"
+    );
+    assert!(
+        audio.path.starts_with(dest_dir),
+        "a download must stay inside the destination it was given"
+    );
+    assert!(
+        audio.path.metadata().expect("file metadata").len() > 0,
+        "an empty file is not a download"
+    );
+}
+
+/// `AudioAnalyzerPort` contract: analysis is **deterministic** and its output is in range.
+///
+/// Determinism is the whole reason BPM/key/energy are allowed to be trusted at all (Principle I), so
+/// it is the contract both sides must honor. Correctness against known-key audio is asserted
+/// separately, against the real adapter only: an in-memory fake cannot know what is in a file, and a
+/// suite that demanded it would be testing the fake's hard-coded answer, not the port.
+pub fn audio_analyzer_suite(analyzer: &dyn AudioAnalyzerPort, audio_path: &Path) {
+    let first = analyzer.analyze(audio_path).expect("analyze the fixture");
+    let second = analyzer
+        .analyze(audio_path)
+        .expect("analyze the same fixture again");
+
+    assert_eq!(
+        first, second,
+        "the same file must always analyze to the same features"
+    );
+    assert!(first.bpm > 0, "a reported tempo must be a real one");
+    assert!(
+        first.energy.value() <= 100,
+        "energy must stay on the normalized scale"
+    );
 }
 
 /// `GenreVibeClassifierPort` contract: returns at least one candidate for a plausible track.

@@ -18,6 +18,7 @@ export function CrateCard({ crate }: { crate: CrateView }) {
           <TableRow>
             <TableHead scope="col">Title</TableHead>
             <TableHead scope="col">Artist</TableHead>
+            <TableHead scope="col">Audio</TableHead>
             <TableHead scope="col">Confidence</TableHead>
             <TableHead scope="col">Status</TableHead>
             <TableHead scope="col" aria-label="Audit trail" />

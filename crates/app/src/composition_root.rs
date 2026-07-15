@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use adapters::anthropic_genre_vibe_classifier::AnthropicGenreVibeClassifier;
 use adapters::internal_api_likes_source::InternalApiLikesSource;
+use adapters::libkeyfinder_aubio_audio_analyzer::LibkeyfinderAubioAudioAnalyzer;
 use adapters::sqlite_audit_log::SqliteAuditLog;
 use adapters::sqlite_crate_repository::SqliteCrateRepository;
 use adapters::sqlite_decision_repository::SqliteDecisionRepository;
@@ -13,6 +14,7 @@ use adapters::sqlite_settings_repository::SqliteSettingsRepository;
 use adapters::sqlite_track_repository::SqliteTrackRepository;
 use adapters::system_clock_provider::SystemClockProvider;
 use adapters::uuid_id_provider::UuidIdProvider;
+use adapters::ytdlp_audio_downloader::YtdlpAudioDownloader;
 use application::audit_recorder::AuditRecorder;
 use application::ports::audit_log::AuditLogPort;
 use application::ports::crate_repository::CrateRepository;
@@ -21,12 +23,15 @@ use application::ports::id_provider::IdProvider;
 use application::ports::settings_repository::SettingsRepository;
 use application::ports::track_repository::TrackRepository;
 use application::use_cases::adjust_threshold::{AdjustThreshold, AdjustThresholdPorts};
+use application::use_cases::analyze_audio::AnalyzeAudio;
+use application::use_cases::analyze_library::{AnalyzeLibrary, AnalyzeLibraryPorts};
 use application::use_cases::apply_manual_decision::{
     ApplyManualDecision, ApplyManualDecisionPorts,
 };
 use application::use_cases::classify_library::ClassifyLibrary;
 use application::use_cases::classify_track::{ClassifyTrack, ClassifyTrackPorts};
 use application::use_cases::deduplicate_library::DeduplicateLibrary;
+use application::use_cases::download_audio::{DownloadAudio, DownloadAudioPorts};
 use application::use_cases::resume_deferred::ResumeDeferred;
 use application::use_cases::route_to_triage::RouteToTriage;
 use application::use_cases::scan_likes::ScanLikes;
@@ -45,6 +50,8 @@ pub struct AppState {
     pub adjust_threshold: Arc<AdjustThreshold>,
     /// Returns deferred tracks to the triage queue (US2).
     pub resume_deferred: Arc<ResumeDeferred>,
+    /// Runs the opt-in audio path — download, analyze, refile by energy (US4).
+    pub analyze_library: Arc<AnalyzeLibrary>,
     /// Track reads for the UI (crate members, run summary, triage queue).
     pub tracks: Arc<dyn TrackRepository>,
     /// Crate reads for the UI (crate browsing, triage picker).
@@ -118,7 +125,7 @@ impl AppState {
         let classify_library = Arc::new(ClassifyLibrary::new(
             tracks.clone(),
             settings.clone(),
-            classify,
+            classify.clone(),
             route.clone(),
             ids.clone(),
         ));
@@ -134,10 +141,38 @@ impl AppState {
             tracks: tracks.clone(),
             settings: settings.clone(),
             decisions: decisions.clone(),
-            route,
+            route: route.clone(),
             ids: ids.clone(),
         }));
-        let resume_deferred = Arc::new(ResumeDeferred::new(tracks.clone(), recorder, ids.clone()));
+        let resume_deferred = Arc::new(ResumeDeferred::new(
+            tracks.clone(),
+            recorder.clone(),
+            ids.clone(),
+        ));
+
+        // The audio path (US4). Constructed unconditionally: the adapters are inert until the user
+        // opts in, and `DownloadAudio` re-checks that setting on every call (Principle V).
+        let download = Arc::new(DownloadAudio::new(DownloadAudioPorts {
+            downloader: Arc::new(YtdlpAudioDownloader::new()),
+            tracks: tracks.clone(),
+            settings: settings.clone(),
+            audit: recorder.clone(),
+        }));
+        let analyze = Arc::new(AnalyzeAudio::new(
+            Arc::new(LibkeyfinderAubioAudioAnalyzer::new()),
+            tracks.clone(),
+            recorder.clone(),
+        ));
+        let analyze_library = Arc::new(AnalyzeLibrary::new(AnalyzeLibraryPorts {
+            tracks: tracks.clone(),
+            settings: settings.clone(),
+            download,
+            analyze,
+            classify,
+            route,
+            ids: ids.clone(),
+            download_dir: config.download_dir().to_path_buf(),
+        }));
 
         Ok(Self {
             scan,
@@ -145,6 +180,7 @@ impl AppState {
             apply_manual_decision,
             adjust_threshold,
             resume_deferred,
+            analyze_library,
             tracks,
             crates,
             decisions,

@@ -5,6 +5,8 @@ use std::fmt;
 
 use uuid::Uuid;
 
+use crate::confidence::Energy;
+
 /// Stable identity of a `Crate`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CrateId(Uuid);
@@ -42,7 +44,33 @@ pub enum EnergyRole {
     Closing,
 }
 
+/// Exclusive upper bound of the `Closing` energy band.
+const CLOSING_ENERGY_MAX: u8 = 19;
+/// Exclusive upper bound of the `Warmup` energy band.
+const WARMUP_ENERGY_MAX: u8 = 44;
+/// Exclusive upper bound of the `Groove` energy band; anything above is `Peak`.
+const GROOVE_ENERGY_MAX: u8 = 69;
+
 impl EnergyRole {
+    /// The role for a measured `energy`, as four ascending bands:
+    /// `Closing` (0–19) → `Warmup` (20–44) → `Groove` (45–69) → `Peak` (70–100).
+    ///
+    /// The roles name a set position, but analysis only measures loudness — so the mapping is a
+    /// reading of energy, not knowledge of where a track sits in a set. `Closing` takes the lowest
+    /// band because a comedown/outro is typically quieter than even a warmup opener, which is low
+    /// but still driving. That is a judgement call energy alone cannot settle: a quiet opener will
+    /// land in `Closing`. It is a sub-role on a genre crate, never the genre itself, and triage lets
+    /// the human override it (Principle V), so the cost of a wrong band is a re-file, not a lost track.
+    #[must_use]
+    pub fn for_energy(energy: Energy) -> Self {
+        match energy.value() {
+            0..=CLOSING_ENERGY_MAX => Self::Closing,
+            20..=WARMUP_ENERGY_MAX => Self::Warmup,
+            45..=GROOVE_ENERGY_MAX => Self::Groove,
+            _ => Self::Peak,
+        }
+    }
+
     /// Human-readable label used in crate display names.
     #[must_use]
     pub const fn label(self) -> &'static str {
@@ -198,5 +226,48 @@ mod tests {
             CrateOrigin::Auto,
         );
         assert_eq!(c.display_name(), "Deep House · Peak");
+    }
+
+    fn role_at(energy: u8) -> EnergyRole {
+        EnergyRole::for_energy(Energy::new(energy).expect("energy in range"))
+    }
+
+    #[test]
+    fn energy_maps_to_four_ascending_bands() {
+        assert_eq!(role_at(0), EnergyRole::Closing);
+        assert_eq!(role_at(30), EnergyRole::Warmup);
+        assert_eq!(role_at(50), EnergyRole::Groove);
+        assert_eq!(role_at(100), EnergyRole::Peak);
+    }
+
+    /// The bands must tile `0..=100` with no gap and no overlap: every boundary pair belongs to
+    /// adjacent roles, so no measurable energy can fall through to a wrong band.
+    #[test]
+    fn band_boundaries_are_contiguous() {
+        assert_eq!(role_at(19), EnergyRole::Closing);
+        assert_eq!(role_at(20), EnergyRole::Warmup);
+        assert_eq!(role_at(44), EnergyRole::Warmup);
+        assert_eq!(role_at(45), EnergyRole::Groove);
+        assert_eq!(role_at(69), EnergyRole::Groove);
+        assert_eq!(role_at(70), EnergyRole::Peak);
+    }
+
+    /// Energy is a scale, so the mapping must never invert: a louder track never files to a
+    /// lower-energy role than a quieter one.
+    #[test]
+    fn mapping_is_monotonic_across_the_whole_scale() {
+        let rank = |role: EnergyRole| match role {
+            EnergyRole::Closing => 0,
+            EnergyRole::Warmup => 1,
+            EnergyRole::Groove => 2,
+            EnergyRole::Peak => 3,
+        };
+        for energy in 0..100u8 {
+            assert!(
+                rank(role_at(energy)) <= rank(role_at(energy + 1)),
+                "energy {energy} outranks {}",
+                energy + 1
+            );
+        }
     }
 }

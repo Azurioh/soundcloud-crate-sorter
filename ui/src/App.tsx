@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { RunControl } from "@/features/run/RunControl";
+import { AudioAnalysisPanel } from "@/features/run/AudioAnalysisPanel";
 import { CrateBrowser } from "@/features/crates/CrateBrowser";
 import { TriagePanel } from "@/features/triage/TriagePanel";
 import { ThemeProvider } from "@/shared/theme/theme-provider";
@@ -35,6 +36,7 @@ export function App() {
         </header>
         <main className="mx-auto flex max-w-5xl flex-col gap-5 px-4 py-6">
           <RunControl reloadKey={crateKey} onLibraryChanged={handleRunFinished} />
+          <AudioAnalysisPanel reloadKey={crateKey} onLibraryChanged={handleRunFinished} />
           <TriagePanel reloadKey={runKey} onLibraryChanged={handleTriageDecided} />
           <CrateBrowser reloadKey={crateKey} />
         </main>

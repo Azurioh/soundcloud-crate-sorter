@@ -14,9 +14,10 @@ for the full spec, plan, data model, and port contracts.
 
 | Increment | User stories | State |
 |---|---|---|
-| **MVP** | US1 — scan → dedup → classify → crates (metadata only) | **in progress** |
-| Increment 2 | US2 — manual triage | planned |
-| Increment 3 | US4 + US5 — audio analysis + local/Rekordbox export | planned |
+| **MVP** | US1 — scan → dedup → classify → crates (metadata only) | done |
+| Increment 2 | US2 — manual triage | done |
+| Increment 3a | US4 — opt-in audio analysis (BPM / Camelot key / energy) | done |
+| Increment 3b | US5 — local/Rekordbox export | **next** |
 | v2 | US3 — SoundCloud playlist write (gated API) | deferred |
 
 ## Architecture
@@ -47,6 +48,15 @@ ui/                 — React + TypeScript (Tauri webview)
   ```sh
   ./scripts/check-system-libs.sh
   ```
+  These are linked, not built: `libkeyfinder-sys` finds libKeyFinder through `pkg-config`, and
+  `aubio-sys` generates its bindings against Homebrew's headers. Homebrew nests `aubio.h` one level
+  deeper than aubio-sys expects, so [`.cargo/config.toml`](.cargo/config.toml) points bindgen at the
+  right directory — a non-default Homebrew prefix only needs `BINDGEN_EXTRA_CLANG_ARGS` set in the
+  shell, no edit.
+
+  `libkeyfinder-sys` is **vendored** (a single-author 0.1.0 crate the whole key path depends on) —
+  see [`crates/adapters/vendor/libkeyfinder-sys/README.md`](crates/adapters/vendor/libkeyfinder-sys/README.md).
+
   > libKeyFinder is **GPL-3.0**, which makes the linked binary GPL-3.0. This is a personal,
   > non-distributed build (constitution Principle II).
 
@@ -59,6 +69,13 @@ logged and never committed:
 cp .env.example .env
 # edit .env and set ANTHROPIC_API_KEY=...
 ```
+
+Two optional overrides, both defaulting inside the OS application-data directory: `SCS_DB_PATH`
+(the SQLite library) and `SCS_DOWNLOAD_DIR` (opt-in downloaded audio).
+
+**Audio download is off by default and stays off until you turn it on in the app**, where the
+personal-use / terms-of-service note is shown (constitution Principle V). Nothing is ever downloaded
+without that opt-in, and everything except BPM/key/energy works without it.
 
 ## Build & run
 
@@ -73,7 +90,15 @@ cd .. && cargo tauri dev    # run the desktop app
 ```sh
 cargo test                              # use-case unit tests (in-memory fakes) + port contract tests
 cargo test --features real-adapters     # contract tests against real adapters (network / system libs)
+
+# The audio analyzer against the real native libraries — no network or API key, just brew's
+# libkeyfinder + aubio. Fixtures are generated, so the ground truth is arithmetic:
+cargo test -p adapters --features real-adapters --test audio_analyzer_contract
 ```
 
 Every use case has isolation tests against in-memory port fakes; every port has a contract test that
 runs against **both** the in-memory fake and the real adapter (constitution Principle VI).
+
+The `real-adapters` suites that need a network or a key read them from the environment:
+`SC_TEST_PROFILE` (a public profile URL), `SC_TEST_TRACK` (a public track permalink), and
+`ANTHROPIC_API_KEY`.

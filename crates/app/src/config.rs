@@ -11,6 +11,10 @@ pub(crate) const API_KEY_ENV: &str = "ANTHROPIC_API_KEY";
 const DB_PATH_ENV: &str = "SCS_DB_PATH";
 /// Database filename, placed inside the OS application-data directory.
 const DB_FILE: &str = "crate-sorter.sqlite";
+/// Environment variable overriding where opt-in downloaded audio is stored.
+const DOWNLOAD_DIR_ENV: &str = "SCS_DOWNLOAD_DIR";
+/// Directory name for downloaded audio, inside the OS application-data directory.
+const DOWNLOAD_DIR: &str = "audio";
 
 /// Runtime configuration for the app.
 pub struct AppConfig {
@@ -19,6 +23,8 @@ pub struct AppConfig {
     api_key: Option<String>,
     /// Path to the local SQLite database file.
     database_path: PathBuf,
+    /// Directory holding opt-in downloaded audio (User Story 4).
+    download_dir: PathBuf,
 }
 
 impl AppConfig {
@@ -39,9 +45,13 @@ impl AppConfig {
         let database_path = std::env::var(DB_PATH_ENV)
             .map(PathBuf::from)
             .unwrap_or_else(|_| data_dir.join(DB_FILE));
+        let download_dir = std::env::var(DOWNLOAD_DIR_ENV)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| data_dir.join(DOWNLOAD_DIR));
         Self {
             api_key,
             database_path,
+            download_dir,
         }
     }
 
@@ -62,6 +72,13 @@ impl AppConfig {
     pub fn database_path(&self) -> &Path {
         &self.database_path
     }
+
+    /// Where opt-in downloaded audio is stored. Nothing is written here unless the user turns
+    /// downloading on (Principle V) — the directory is created by the downloader on first use.
+    #[must_use]
+    pub fn download_dir(&self) -> &Path {
+        &self.download_dir
+    }
 }
 
 impl fmt::Debug for AppConfig {
@@ -70,6 +87,7 @@ impl fmt::Debug for AppConfig {
         f.debug_struct("AppConfig")
             .field("api_key", &self.api_key.as_ref().map(|_| "<redacted>"))
             .field("database_path", &self.database_path)
+            .field("download_dir", &self.download_dir)
             .finish()
     }
 }
@@ -85,6 +103,7 @@ mod tests {
         AppConfig {
             api_key: api_key.map(str::to_owned),
             database_path: PathBuf::from("/tmp/crate-sorter.sqlite"),
+            download_dir: PathBuf::from("/tmp/audio"),
         }
     }
 
