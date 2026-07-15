@@ -702,10 +702,23 @@ Deliverable: the dark app frame with a sticky header (title, subtitle, theme tog
 
 **Files:**
 - Modify: `ui/src/App.tsx`
+- Modify: `ui/index.html`
 
 **Interfaces:**
 - Consumes: `ThemeProvider` from `@/shared/theme/theme-provider`; `ThemeToggle` from `@/shared/theme/theme-toggle`; existing `RunControl`, `CrateBrowser`.
 - Produces: unchanged `App` export + the `reloadKey` wiring between the two features.
+
+- [ ] **Step 0: Prevent a flash of light theme on first paint**
+
+`ThemeProvider` applies the `.dark` class in a `useEffect`, which runs *after* the first paint, and `:root` holds the light tokens. Wiring the provider in (Step 1) would therefore make the app flash light before turning dark. Ship the dark default in the markup so the very first paint is already correct; the provider removes the class if the user selected light.
+
+In `ui/index.html`, change the opening `<html>` tag to:
+
+```html
+<html lang="en" class="dark">
+```
+
+Change nothing else in `index.html`.
 
 - [ ] **Step 1: Rewrite `App.tsx`**
 
@@ -757,7 +770,7 @@ Expected: PASS. (RunControl/CrateBrowser still use old markup — fine; they mig
 - [ ] **Step 3: Commit**
 
 ```bash
-git add ui/src/App.tsx
+git add ui/src/App.tsx ui/index.html
 git commit -m "feat(ui): dark app shell with sticky header and theme toggle"
 ```
 
