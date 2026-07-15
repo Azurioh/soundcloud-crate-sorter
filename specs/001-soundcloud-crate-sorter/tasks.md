@@ -25,12 +25,12 @@ Frontend: `ui/`. Tests: `tests/contract`, `tests/integration`, plus `#[cfg(test)
 
 **Purpose**: Workspace, tooling, system-lib prerequisites.
 
-- [ ] T001 Create Cargo workspace with member crates `domain`, `application`, `adapters`, `app` in root `Cargo.toml` and per-crate `Cargo.toml`
-- [ ] T002 [P] Pin workspace dependencies (verify each on crates.io first): tauri v2, reqwest, serde/serde_json, rusqlite, tracing, uuid, lofty, symphonia, aubio-rs, libkeyfinder-sys in `Cargo.toml`
-- [ ] T003 [P] Configure rustfmt + clippy (`-D warnings`) in `rustfmt.toml` and `clippy.toml`
-- [ ] T004 [P] Write `scripts/check-system-libs.sh` verifying `brew` libkeyfinder/fftw/aubio + `yt-dlp` + `pkg-config --exists libkeyfinder`; document in `README.md`
-- [ ] T005 Scaffold Tauri v2 app (`crates/app`) + React+TS+Vite frontend (`ui/`) with the invoke bridge
-- [ ] T006 [P] Load `ANTHROPIC_API_KEY` from env in `crates/app` config; ensure it is never logged or committed
+- [X] T001 Create Cargo workspace with member crates `domain`, `application`, `adapters`, `app` in root `Cargo.toml` and per-crate `Cargo.toml`
+- [X] T002 [P] Pin workspace dependencies (verify each on crates.io first): tauri v2, reqwest, serde/serde_json, rusqlite, tracing, uuid, lofty, symphonia, aubio-rs, libkeyfinder-sys in `Cargo.toml`
+- [X] T003 [P] Configure rustfmt + clippy (`-D warnings`) in `rustfmt.toml` and `clippy.toml`
+- [X] T004 [P] Write `scripts/check-system-libs.sh` verifying `brew` libkeyfinder/fftw/aubio + `yt-dlp` + `pkg-config --exists libkeyfinder`; document in `README.md`
+- [X] T005 Scaffold Tauri v2 app (`crates/app`) + React+TS+Vite frontend (`ui/`) with the invoke bridge
+- [X] T006 [P] Load `ANTHROPIC_API_KEY` from env in `crates/app` config; ensure it is never logged or committed
 
 **Checkpoint**: `cargo build` and `cargo tauri dev` run an empty shell.
 
@@ -43,30 +43,30 @@ Frontend: `ui/`. Tests: `tests/contract`, `tests/integration`, plus `#[cfg(test)
 
 ### Entities (crates/domain)
 
-- [ ] T007 [P] `Track`, `TrackId`, `TrackStatus` in `crates/domain/src/track.rs`
-- [ ] T008 [P] `Crate`, `CrateId`, `EnergyRole`, `CrateOrigin` in `crates/domain/src/crate_.rs`
-- [ ] T009 [P] `CamelotKey` value object in `crates/domain/src/camelot_key.rs`
-- [ ] T010 [P] `Confidence`, `ConfidenceThreshold`, `Energy` newtypes in `crates/domain/src/confidence.rs`
-- [ ] T011 [P] `ClassificationDecision`, `DecisionSource`, `ClassificationReason` in `crates/domain/src/classification.rs`
-- [ ] T012 [P] `AuditEvent`, `PipelineStage`, `AuditKind` in `crates/domain/src/audit.rs`
+- [X] T007 [P] `Track`, `TrackId`, `TrackStatus` in `crates/domain/src/track.rs`
+- [X] T008 [P] `Crate`, `CrateId`, `EnergyRole`, `CrateOrigin` in `crates/domain/src/crate_.rs`
+- [X] T009 [P] `CamelotKey` value object in `crates/domain/src/camelot_key.rs`
+- [X] T010 [P] `Confidence`, `ConfidenceThreshold`, `Energy` newtypes in `crates/domain/src/confidence.rs`
+- [X] T011 [P] `ClassificationDecision`, `DecisionSource`, `ClassificationReason` in `crates/domain/src/classification.rs`
+- [X] T012 [P] `AuditEvent`, `PipelineStage`, `AuditKind` in `crates/domain/src/audit.rs`
 
 ### Port traits (crates/application/src/ports) — per contracts/ports.md
 
-- [ ] T013 Define all port traits + typed error enums in `crates/application/src/ports/` (one file each: likes_source, audio_downloader, audio_analyzer, genre_vibe_classifier, tag_writer, track_repository, crate_repository, audit_log, clock, id_provider, playlist_publisher[v2-stub])
+- [X] T013 Define all port traits + typed error enums in `crates/application/src/ports/` (one file each: likes_source, audio_downloader, audio_analyzer, genre_vibe_classifier, tag_writer, track_repository, crate_repository, audit_log, clock, id_provider, playlist_publisher[v2-stub])
 
 ### Providers + fakes + persistence
 
-- [ ] T014 [P] `system-clock.provider` + `uuid-id.provider` adapters in `crates/adapters/src/system_clock_provider.rs`, `uuid_id_provider.rs`
-- [ ] T015 [P] Seeded in-memory fakes for `ClockPort`/`IdProvider` in `crates/application/src/testkit/`
-- [ ] T016 SQLite schema + migrations (tracks, crates, classification_decisions, audit_events, settings; `tracks.source_track_id` UNIQUE; indexes on audit run_id/track_id) in `crates/adapters/src/sqlite_schema.rs`
-- [ ] T017 `sqlite-track.repository` + `sqlite-crate.repository` (map domain↔rows at edge) in `crates/adapters/src/sqlite_track_repository.rs`, `sqlite_crate_repository.rs`
-- [ ] T018 `sqlite-audit.log` adapter (append-only + `events_for_track`) in `crates/adapters/src/sqlite_audit_log.rs`
-- [ ] T019 [P] In-memory fakes for TrackRepository/CrateRepository/AuditLog in `crates/application/src/testkit/`
-- [ ] T020 Port contract-test harness that runs one suite against BOTH in-memory and real adapter in `tests/contract/harness.rs`
-- [ ] T021 [P] `tracing` subscriber (structured, leveled, secret-redacting) in `crates/app/src/observability.rs`
-- [ ] T022 Composition-root skeleton wiring providers + repos + audit in `crates/app/src/composition_root.rs`
-- [ ] T023 Tauri command bridge skeleton in `crates/app/src/commands.rs`
-- [ ] T024 `Settings` entity + `sqlite` settings store (confidence_threshold, download_enabled=false default, export_mode=local) in `crates/domain/src/settings.rs` + `crates/adapters/src/sqlite_settings_repository.rs`
+- [X] T014 [P] `system-clock.provider` + `uuid-id.provider` adapters in `crates/adapters/src/system_clock_provider.rs`, `uuid_id_provider.rs`
+- [X] T015 [P] Seeded in-memory fakes for `ClockPort`/`IdProvider` in `crates/application/src/testkit/`
+- [X] T016 SQLite schema + migrations (tracks, crates, classification_decisions, audit_events, settings; `tracks.source_track_id` UNIQUE; indexes on audit run_id/track_id) in `crates/adapters/src/sqlite_schema.rs`
+- [X] T017 `sqlite-track.repository` + `sqlite-crate.repository` (map domain↔rows at edge) in `crates/adapters/src/sqlite_track_repository.rs`, `sqlite_crate_repository.rs`
+- [X] T018 `sqlite-audit.log` adapter (append-only + `events_for_track`) in `crates/adapters/src/sqlite_audit_log.rs`
+- [X] T019 [P] In-memory fakes for TrackRepository/CrateRepository/AuditLog in `crates/application/src/testkit/`
+- [X] T020 Port contract-test harness that runs one suite against BOTH in-memory and real adapter in `tests/contract/harness.rs`
+- [X] T021 [P] `tracing` subscriber (structured, leveled, secret-redacting) in `crates/app/src/observability.rs`
+- [X] T022 Composition-root skeleton wiring providers + repos + audit in `crates/app/src/composition_root.rs`
+- [X] T023 Tauri command bridge skeleton in `crates/app/src/commands.rs`
+- [X] T024 `Settings` entity + `sqlite` settings store (confidence_threshold, download_enabled=false default, export_mode=local) in `crates/domain/src/settings.rs` + `crates/adapters/src/sqlite_settings_repository.rs`
 
 **Checkpoint**: entities, ports, providers, SQLite, audit, logging compile; contract harness runs against fakes.
 
@@ -79,29 +79,29 @@ Frontend: `ui/`. Tests: `tests/contract`, `tests/integration`, plus `#[cfg(test)
 
 ### Tests (write first)
 
-- [ ] T025 [P] [US1] Contract test `LikesSourcePort` (in-memory + real) in `tests/contract/likes_source.rs`
-- [ ] T026 [P] [US1] Contract test `GenreVibeClassifierPort` in `tests/contract/genre_vibe_classifier.rs`
-- [ ] T027 [P] [US1] Unit tests for ScanLikes / DeduplicateLibrary / ClassifyTrack / RouteToTriage with fakes in each use-case's `#[cfg(test)]`
+- [X] T025 [P] [US1] Contract test `LikesSourcePort` (in-memory + real) in `tests/contract/likes_source.rs`
+- [X] T026 [P] [US1] Contract test `GenreVibeClassifierPort` in `tests/contract/genre_vibe_classifier.rs`
+- [X] T027 [P] [US1] Unit tests for ScanLikes / DeduplicateLibrary / ClassifyTrack / RouteToTriage with fakes in each use-case's `#[cfg(test)]`
 
 ### Adapters
 
-- [ ] T028 [US1] `internal-api-likes.source`: `/resolve` + `/users/{id}/likes/tracks`, `linked_partitioning` cursor, rotating client_id refresh, **rate-limit backoff/retry** (research R1), map to `LikedTrack` in `crates/adapters/src/internal_api_likes_source.rs`
-- [ ] T029 [US1] `anthropic-genre-vibe.classifier`: Claude `claude-haiku-4-5-20251001` over HTTP, JSON schema → genre candidates + confidence + vibe (never BPM/key/energy) in `crates/adapters/src/anthropic_genre_vibe_classifier.rs`
+- [X] T028 [US1] `internal-api-likes.source`: `/resolve` + `/users/{id}/likes/tracks`, `linked_partitioning` cursor, rotating client_id refresh, **rate-limit backoff/retry** (research R1), map to `LikedTrack` in `crates/adapters/src/internal_api_likes_source.rs`
+- [X] T029 [US1] `anthropic-genre-vibe.classifier`: Claude `claude-haiku-4-5-20251001` over HTTP, JSON schema → genre candidates + confidence + vibe (never BPM/key/energy) in `crates/adapters/src/anthropic_genre_vibe_classifier.rs`
 
 ### Use cases (crates/application/src/use_cases)
 
-- [ ] T030 [US1] `ScanLikes` (resolve → list → upsert new only) in `scan_likes.rs`
-- [ ] T031 [US1] `DeduplicateLibrary` (collapse by `source_track_id`) in `deduplicate_library.rs`
-- [ ] T032 [US1] `ClassifyTrack` (genre from source tag; call classifier only if ambiguous/missing; set confidence + `ClassificationReason`; **detect likely non-music/non-mixable uploads by duration/type → dedicated review crate, FR-030**) in `classify_track.rs`
-- [ ] T033 [US1] `RouteToTriage` (confidence vs threshold; ties → triage) in `route_to_triage.rs`
-- [ ] T034 [US1] `CrateRepository.find_or_create` dynamic crate creation (genre only in metadata-only mode) in `crates/adapters/src/sqlite_crate_repository.rs`
+- [X] T030 [US1] `ScanLikes` (resolve → list → upsert new only) in `scan_likes.rs`
+- [X] T031 [US1] `DeduplicateLibrary` (collapse by `source_track_id`) in `deduplicate_library.rs`
+- [X] T032 [US1] `ClassifyTrack` (genre from source tag; call classifier only if ambiguous/missing; set confidence + `ClassificationReason`; **detect likely non-music/non-mixable uploads by duration/type → dedicated review crate, FR-030**) in `classify_track.rs`
+- [X] T033 [US1] `RouteToTriage` (confidence vs threshold; ties → triage) in `route_to_triage.rs`
+- [X] T034 [US1] `CrateRepository.find_or_create` dynamic crate creation (genre only in metadata-only mode) in `crates/adapters/src/sqlite_crate_repository.rs`
 
 ### Wiring + UI + audit
 
-- [ ] T035 [US1] Wire US1 adapters + use cases in composition root; add Tauri commands `scan`, `classify_all`, `list_crates`, `run_summary` in `crates/app/src/commands.rs`
-- [ ] T036 [P] [US1] UI: scan/run control + progress + run summary (counts) in `ui/src/features/run/`
-- [ ] T037 [P] [US1] UI: crate browsing view (crates + members + confidence) in `ui/src/features/crates/`
-- [ ] T038 [US1] Emit audit events for scan/dedup/classify (score + reason) in the US1 use cases
+- [X] T035 [US1] Wire US1 adapters + use cases in composition root; add Tauri commands `scan`, `classify_all`, `list_crates`, `run_summary` in `crates/app/src/commands.rs`
+- [X] T036 [P] [US1] UI: scan/run control + progress + run summary (counts) in `ui/src/features/run/`
+- [X] T037 [P] [US1] UI: crate browsing view (crates + members + confidence) in `ui/src/features/crates/`
+- [X] T038 [US1] Emit audit events for scan/dedup/classify (score + reason) in the US1 use cases
 
 **Checkpoint**: US1 delivers a working MVP — flat likes become confidence-scored crates.
 
