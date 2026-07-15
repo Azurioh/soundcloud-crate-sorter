@@ -25,7 +25,7 @@ export function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
         type="button"
         variant="ghost"
         size="icon"
-        className="size-6 shrink-0"
+        className="shrink-0"
         onClick={onDismiss}
         aria-label="Dismiss error"
       >

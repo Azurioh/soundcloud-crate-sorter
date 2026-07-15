@@ -12,14 +12,15 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-/** Reads the persisted theme, falling back to the OS preference, then dark. */
+/**
+ * Reads the persisted theme. Dark is the product default when nothing is stored —
+ * `prefers-color-scheme` is deliberately not consulted, so a light-mode OS still
+ * opens the dark console. The toggle's choice is remembered.
+ */
 function initialTheme(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored === "dark" || stored === "light") {
     return stored;
-  }
-  if (window.matchMedia("(prefers-color-scheme: light)").matches) {
-    return "light";
   }
   return "dark";
 }

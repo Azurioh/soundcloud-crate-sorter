@@ -43,7 +43,7 @@ export function CrateBrowser({ reloadKey }: CrateBrowserProps) {
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle>Crates</CardTitle>
-        <Button type="button" variant="ghost" size="sm" onClick={reload} disabled={loading}>
+        <Button type="button" variant="ghost" onClick={reload} disabled={loading}>
           <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
           {loading ? "Loading…" : "Refresh"}
         </Button>
