@@ -8,19 +8,28 @@
 use std::sync::Arc;
 
 use domain::audit::{AuditDetail, AuditKind, AuditOutcome, PipelineStage, RunId};
-use domain::classification::ClassificationReason;
+use domain::classification::{
+    ClassificationDecision, ClassificationReason, DecisionId, DecisionSource, GenreSuggestion,
+    NewDecision,
+};
 use domain::confidence::Confidence;
-use domain::crate_::CrateId;
+use domain::crate_::{CrateId, CrateOrigin};
 use domain::track::Track;
 use thiserror::Error;
 
 use crate::audit_recorder::{AuditRecorder, RecordParams};
 use crate::ports::audit_log::AuditError;
-use crate::ports::crate_repository::CrateRepository;
+use crate::ports::clock::ClockPort;
+use crate::ports::crate_repository::{CrateRepository, CrateSpec};
+use crate::ports::decision_repository::DecisionRepository;
 use crate::ports::genre_vibe_classifier::{
     ClassificationInput, GenreCandidate, GenreVibeClassifierPort,
 };
+use crate::ports::id_provider::IdProvider;
 use crate::ports::repo_error::RepoError;
+
+/// How many runner-up genres a triage card offers as alternative chips (FR-015: "a small set").
+const MAX_ALTERNATIVES: usize = 3;
 
 /// Confidence assigned when the genre comes straight from the source tag.
 const SOURCE_TAG_CONFIDENCE: f32 = 0.9;
@@ -38,7 +47,8 @@ const REVIEW_CRATE_GENRE: &str = "Review";
 /// Genre bucket when the classifier cannot determine a genre.
 const UNKNOWN_CRATE_GENRE: &str = "Unknown";
 
-/// The computed classification for a track (not yet persisted — routing is `RouteToTriage`'s job).
+/// The computed classification for a track (the track's status is not yet updated — routing is
+/// `RouteToTriage`'s job).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Classification {
     /// The resolved crate.
@@ -49,6 +59,8 @@ pub struct Classification {
     pub reason: ClassificationReason,
     /// Any AI-inferred vibe tags.
     pub vibe_tags: Vec<String>,
+    /// Runner-up genres, for the triage card's alternative chips (FR-015).
+    pub alternatives: Vec<GenreSuggestion>,
 }
 
 /// Failure classifying a track.
@@ -68,51 +80,98 @@ struct GenreDecision {
     confidence: Confidence,
     reason: ClassificationReason,
     vibe_tags: Vec<String>,
+    alternatives: Vec<GenreSuggestion>,
+}
+
+/// The collaborators `ClassifyTrack` needs (grouped per the 2+-params convention).
+pub struct ClassifyTrackPorts {
+    /// Infers genre/vibe when the source tag cannot answer.
+    pub classifier: Arc<dyn GenreVibeClassifierPort>,
+    /// Resolves the chosen genre to a crate.
+    pub crates: Arc<dyn CrateRepository>,
+    /// Stores the decision so triage can rebuild the card later.
+    pub decisions: Arc<dyn DecisionRepository>,
+    /// Records the observable trail.
+    pub audit: Arc<AuditRecorder>,
+    /// Stamps the decision time (the only sanctioned time source).
+    pub clock: Arc<dyn ClockPort>,
+    /// Mints the decision id (the only sanctioned id source).
+    pub ids: Arc<dyn IdProvider>,
 }
 
 /// Classifies a single track into a crate.
 pub struct ClassifyTrack {
     classifier: Arc<dyn GenreVibeClassifierPort>,
     crates: Arc<dyn CrateRepository>,
+    decisions: Arc<dyn DecisionRepository>,
     audit: Arc<AuditRecorder>,
+    clock: Arc<dyn ClockPort>,
+    ids: Arc<dyn IdProvider>,
 }
 
 impl ClassifyTrack {
     /// Builds the use case from its ports.
     #[must_use]
-    pub fn new(
-        classifier: Arc<dyn GenreVibeClassifierPort>,
-        crates: Arc<dyn CrateRepository>,
-        audit: Arc<AuditRecorder>,
-    ) -> Self {
+    pub fn new(ports: ClassifyTrackPorts) -> Self {
         Self {
-            classifier,
-            crates,
-            audit,
+            classifier: ports.classifier,
+            crates: ports.crates,
+            decisions: ports.decisions,
+            audit: ports.audit,
+            clock: ports.clock,
+            ids: ports.ids,
         }
     }
 
-    /// Classifies `track` under `run_id`, resolving its crate and recording the decision.
+    /// Classifies `track` under `run_id`, resolving its crate and persisting + auditing the decision.
     ///
     /// # Errors
-    /// [`ClassifyTrackError::Repo`] on crate resolution failure; [`ClassifyTrackError::Audit`] if
-    /// the decision cannot be recorded.
+    /// [`ClassifyTrackError::Repo`] on crate resolution or decision-persistence failure;
+    /// [`ClassifyTrackError::Audit`] if the trail cannot be recorded.
     pub async fn execute(
         &self,
         run_id: RunId,
         track: &Track,
     ) -> Result<Classification, ClassifyTrackError> {
         let decision = self.decide_genre(track).await;
-        let crate_ = self.crates.find_or_create(&decision.genre, None).await?;
+        let crate_ = self
+            .crates
+            .find_or_create(&CrateSpec {
+                genre: decision.genre.clone(),
+                role: None,
+                origin: CrateOrigin::Auto,
+            })
+            .await?;
         let classification = Classification {
             crate_id: *crate_.id(),
             confidence: decision.confidence,
             reason: decision.reason,
             vibe_tags: decision.vibe_tags,
+            alternatives: decision.alternatives,
         };
+        self.persist_decision(track, &classification).await?;
         self.record_decision(run_id, track, &decision.genre, &classification)
             .await?;
         Ok(classification)
+    }
+
+    /// Appends the typed decision record triage reads back to rebuild the card (FR-015).
+    async fn persist_decision(
+        &self,
+        track: &Track,
+        classification: &Classification,
+    ) -> Result<(), RepoError> {
+        let decision = ClassificationDecision::new(NewDecision {
+            id: DecisionId::from_uuid(self.ids.new_id()),
+            track_id: *track.id(),
+            crate_id: classification.crate_id,
+            source: DecisionSource::Auto,
+            confidence: Some(classification.confidence),
+            reason: classification.reason,
+            alternatives: classification.alternatives.clone(),
+            decided_at: self.clock.now(),
+        });
+        self.decisions.record(&decision).await
     }
 
     /// Determines genre/confidence/reason, calling the AI only when the source tag is absent.
@@ -123,6 +182,7 @@ impl ClassifyTrack {
                 confidence: constant_confidence(NON_MUSIC_CONFIDENCE),
                 reason: ClassificationReason::LikelyNonMusic,
                 vibe_tags: Vec::new(),
+                alternatives: Vec::new(),
             };
         }
         if let Some(genre) = track.source_genre() {
@@ -131,6 +191,7 @@ impl ClassifyTrack {
                 confidence: constant_confidence(SOURCE_TAG_CONFIDENCE),
                 reason: ClassificationReason::GenreFromSourceTag,
                 vibe_tags: Vec::new(),
+                alternatives: Vec::new(),
             };
         }
         self.classify_with_ai(track).await
@@ -145,12 +206,13 @@ impl ClassifyTrack {
             description: None,
         };
         match self.classifier.classify(&input).await {
-            Ok(suggestion) => match most_confident(suggestion.candidates) {
-                Some(candidate) => GenreDecision {
-                    genre: candidate.genre,
-                    confidence: candidate.confidence,
+            Ok(suggestion) => match split_off_most_confident(suggestion.candidates) {
+                Some((chosen, runners_up)) => GenreDecision {
+                    genre: chosen.genre,
+                    confidence: chosen.confidence,
                     reason: ClassificationReason::GenreFromAi,
                     vibe_tags: suggestion.vibe_tags,
+                    alternatives: runners_up,
                 },
                 // The AI answered but offered no genre.
                 None => fallback_decision(ClassificationReason::GenreFromAi),
@@ -198,27 +260,42 @@ fn is_likely_non_music(duration_ms: u64) -> bool {
     !(MIN_MUSIC_DURATION_MS..=MAX_MUSIC_DURATION_MS).contains(&duration_ms)
 }
 
-/// Picks the highest-confidence candidate, or `None` when the classifier offered none.
+/// Splits the candidates into the highest-confidence one and up to [`MAX_ALTERNATIVES`] runners-up
+/// (confidence-descending), or `None` when the classifier offered none.
 ///
 /// The port documents candidates as "most-confident first", but that ordering is only ever a
 /// request made of a model in a prompt — nothing enforces it, and taking the first entry on faith
 /// means a reply of `[{Ambient, 0.7}, {Techno, 0.95}]` files the track as Ambient at 0.7: above
 /// the default threshold, so auto-filed, silently, into the genre the model ranked second.
-/// The use case owns the decision, so it selects rather than trusts.
-fn most_confident(candidates: Vec<GenreCandidate>) -> Option<GenreCandidate> {
-    candidates
-        .into_iter()
-        .max_by(|a, b| a.confidence.value().total_cmp(&b.confidence.value()))
+/// The use case owns the decision, so it sorts rather than trusts — which also makes the runners-up
+/// it hands to triage the genuinely next-best genres, not merely the ones the model listed next.
+fn split_off_most_confident(
+    candidates: Vec<GenreCandidate>,
+) -> Option<(GenreCandidate, Vec<GenreSuggestion>)> {
+    let mut ranked = candidates;
+    ranked.sort_by(|a, b| b.confidence.value().total_cmp(&a.confidence.value()));
+    let mut ranked = ranked.into_iter();
+    let chosen = ranked.next()?;
+    let runners_up = ranked
+        .take(MAX_ALTERNATIVES)
+        .map(|candidate| GenreSuggestion {
+            genre: candidate.genre,
+            confidence: candidate.confidence,
+        })
+        .collect();
+    Some((chosen, runners_up))
 }
 
 /// The low-confidence "no genre determined" decision that routes a track to triage. `reason`
-/// records *why* no genre was determined (AI answered but empty vs. AI unavailable).
+/// records *why* no genre was determined (AI answered but empty vs. AI unavailable). It carries no
+/// alternatives — there is nothing to suggest, so the triage card falls back to the full picker.
 fn fallback_decision(reason: ClassificationReason) -> GenreDecision {
     GenreDecision {
         genre: UNKNOWN_CRATE_GENRE.to_owned(),
         confidence: constant_confidence(FALLBACK_CONFIDENCE),
         reason,
         vibe_tags: Vec::new(),
+        alternatives: Vec::new(),
     }
 }
 
@@ -238,6 +315,7 @@ mod tests {
     use crate::testkit::fixed_clock::FixedClock;
     use crate::testkit::in_memory_audit_log::InMemoryAuditLog;
     use crate::testkit::in_memory_crate_repository::InMemoryCrateRepository;
+    use crate::testkit::in_memory_decision_repository::InMemoryDecisionRepository;
     use crate::testkit::seq_id_provider::SeqIdProvider;
     use crate::testkit::stub_genre_vibe_classifier::StubGenreVibeClassifier;
 
@@ -278,37 +356,77 @@ mod tests {
     /// default 0.6 threshold, so auto-filed into the genre the model ranked second.
     #[test]
     fn picks_the_highest_confidence_candidate_regardless_of_model_ordering() {
-        let picked = most_confident(vec![candidate("Ambient", 0.7), candidate("Techno", 0.95)])
-            .expect("a candidate is returned");
+        let (picked, _) =
+            split_off_most_confident(vec![candidate("Ambient", 0.7), candidate("Techno", 0.95)])
+                .expect("a candidate is returned");
         assert_eq!(picked.genre, "Techno");
         assert_eq!(picked.confidence.value(), 0.95);
     }
 
+    /// The runners-up become the triage card's chips, so they must be the genuinely next-best
+    /// genres — ranked here, not left in whatever order the model emitted.
+    #[test]
+    fn runners_up_are_ranked_by_confidence_not_model_order() {
+        let (_, alternatives) = split_off_most_confident(vec![
+            candidate("Ambient", 0.2),
+            candidate("Techno", 0.95),
+            candidate("Trance", 0.6),
+        ])
+        .expect("a candidate is returned");
+
+        let genres: Vec<&str> = alternatives.iter().map(|a| a.genre.as_str()).collect();
+        assert_eq!(genres, vec!["Trance", "Ambient"]);
+    }
+
+    #[test]
+    fn runners_up_are_capped_to_a_small_set() {
+        let candidates = vec![
+            candidate("A", 0.9),
+            candidate("B", 0.8),
+            candidate("C", 0.7),
+            candidate("D", 0.6),
+            candidate("E", 0.5),
+            candidate("F", 0.4),
+        ];
+        let (_, alternatives) = split_off_most_confident(candidates).expect("a candidate");
+        assert_eq!(alternatives.len(), MAX_ALTERNATIVES);
+    }
+
     #[test]
     fn no_candidates_yields_none() {
-        assert!(most_confident(vec![]).is_none());
+        assert!(split_off_most_confident(vec![]).is_none());
     }
 
     struct Fixture {
         classify: ClassifyTrack,
         classifier: Arc<StubGenreVibeClassifier>,
         crates: Arc<InMemoryCrateRepository>,
+        decisions: Arc<InMemoryDecisionRepository>,
     }
 
     fn fixture(classifier: StubGenreVibeClassifier) -> Fixture {
         let ids: Arc<SeqIdProvider> = Arc::new(SeqIdProvider::new());
-        let crates = Arc::new(InMemoryCrateRepository::new(ids));
+        let crates = Arc::new(InMemoryCrateRepository::new(ids.clone()));
+        let decisions = Arc::new(InMemoryDecisionRepository::new());
         let recorder = Arc::new(AuditRecorder::new(
             Arc::new(InMemoryAuditLog::new()),
             Arc::new(FixedClock::at_millis(1_000)),
             Arc::new(SeqIdProvider::new()),
         ));
         let classifier = Arc::new(classifier);
-        let classify = ClassifyTrack::new(classifier.clone(), crates.clone(), recorder);
+        let classify = ClassifyTrack::new(ClassifyTrackPorts {
+            classifier: classifier.clone(),
+            crates: crates.clone(),
+            decisions: decisions.clone(),
+            audit: recorder,
+            clock: Arc::new(FixedClock::at_millis(1_000)),
+            ids,
+        });
         Fixture {
             classify,
             classifier,
             crates,
+            decisions,
         }
     }
 
@@ -361,6 +479,34 @@ mod tests {
         assert_eq!(
             fx.crates.list().await.unwrap()[0].genre(),
             UNKNOWN_CRATE_GENRE
+        );
+    }
+
+    /// Triage rebuilds its card from the persisted decision, not from the track (which drops its
+    /// crate on the way into triage). If `execute` stops recording one, every sub-threshold track
+    /// loses its top suggestion and its chips (FR-015).
+    #[tokio::test]
+    async fn persists_the_decision_with_its_alternatives_for_triage() {
+        let fx = fixture(StubGenreVibeClassifier::always(GenreVibeSuggestion {
+            candidates: vec![candidate("Techno", 0.4), candidate("Trance", 0.3)],
+            vibe_tags: vec!["dark".into()],
+        }));
+        let track = track(None, 300_000);
+
+        let classification = fx.classify.execute(run(), &track).await.unwrap();
+
+        let stored = fx
+            .decisions
+            .find_latest_for_track(track.id())
+            .await
+            .unwrap()
+            .expect("a decision was recorded");
+        assert_eq!(stored.crate_id(), &classification.crate_id);
+        assert_eq!(stored.source(), DecisionSource::Auto);
+        assert_eq!(stored.reason(), ClassificationReason::GenreFromAi);
+        assert_eq!(
+            stored.alternatives().first().map(|a| a.genre.as_str()),
+            Some("Trance")
         );
     }
 

@@ -6,6 +6,7 @@
 pub mod fixed_clock;
 pub mod in_memory_audit_log;
 pub mod in_memory_crate_repository;
+pub mod in_memory_decision_repository;
 pub mod in_memory_settings_repository;
 pub mod in_memory_track_repository;
 pub mod seq_id_provider;

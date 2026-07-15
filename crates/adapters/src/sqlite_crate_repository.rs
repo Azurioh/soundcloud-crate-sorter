@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use application::ports::crate_repository::CrateRepository;
+use application::ports::crate_repository::{CrateRepository, CrateSpec};
 use application::ports::id_provider::IdProvider;
 use application::ports::repo_error::RepoError;
 use async_trait::async_trait;
@@ -43,20 +43,16 @@ impl SqliteCrateRepository {
 
 #[async_trait]
 impl CrateRepository for SqliteCrateRepository {
-    async fn find_or_create(
-        &self,
-        genre: &str,
-        role: Option<EnergyRole>,
-    ) -> Result<Crate, RepoError> {
+    async fn find_or_create(&self, spec: &CrateSpec) -> Result<Crate, RepoError> {
         let conn = self.connection.lock().expect("sqlite mutex poisoned");
-        let role_token = role.map_or("", EnergyRole::as_str);
+        let role_token = spec.role.map_or("", EnergyRole::as_str);
 
         let existing = conn
             .query_row(
                 &format!(
                     "SELECT {SELECT_COLUMNS} FROM crates WHERE genre = ?1 AND energy_role = ?2"
                 ),
-                params![genre, role_token],
+                params![spec.genre, role_token],
                 read_raw_row,
             )
             .optional()
@@ -68,15 +64,10 @@ impl CrateRepository for SqliteCrateRepository {
         let id = CrateId::from_uuid(self.ids.new_id());
         conn.execute(
             "INSERT INTO crates (id, genre, energy_role, created_by) VALUES (?1, ?2, ?3, ?4)",
-            params![
-                id.to_string(),
-                genre,
-                role_token,
-                CrateOrigin::Auto.as_str()
-            ],
+            params![id.to_string(), spec.genre, role_token, spec.origin.as_str()],
         )
         .map_err(to_repo_error)?;
-        Ok(Crate::new(id, genre.to_owned(), role, CrateOrigin::Auto))
+        Ok(Crate::new(id, spec.genre.clone(), spec.role, spec.origin))
     }
 
     async fn find_by_id(&self, id: &CrateId) -> Result<Option<Crate>, RepoError> {

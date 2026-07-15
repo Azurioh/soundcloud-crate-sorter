@@ -9,6 +9,7 @@ pub mod audio_downloader;
 pub mod audit_log;
 pub mod clock;
 pub mod crate_repository;
+pub mod decision_repository;
 pub mod genre_vibe_classifier;
 pub mod id_provider;
 pub mod likes_source;

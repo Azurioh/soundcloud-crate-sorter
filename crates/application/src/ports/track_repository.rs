@@ -41,6 +41,14 @@ pub trait TrackRepository: Send + Sync {
     /// [`RepoError`] on I/O, constraint, or serialization failure.
     async fn list_in_triage(&self) -> Result<Vec<Track>, RepoError>;
 
+    /// Returns tracks deferred out of a triage session, awaiting a later one (data-model:
+    /// `Deferred → InTriage`). Without this query a deferred track would have no way back into the
+    /// queue and would silently disappear from the library's unfinished work.
+    ///
+    /// # Errors
+    /// [`RepoError`] on I/O, constraint, or serialization failure.
+    async fn list_deferred(&self) -> Result<Vec<Track>, RepoError>;
+
     /// Returns tracks assigned to a given crate.
     ///
     /// # Errors

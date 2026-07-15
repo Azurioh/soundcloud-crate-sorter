@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use domain::crate_::{Crate, CrateId, CrateOrigin, EnergyRole};
+use domain::crate_::{Crate, CrateId};
 
-use crate::ports::crate_repository::CrateRepository;
+use crate::ports::crate_repository::{CrateRepository, CrateSpec};
 use crate::ports::id_provider::IdProvider;
 use crate::ports::repo_error::RepoError;
 
@@ -30,23 +30,19 @@ impl InMemoryCrateRepository {
 
 #[async_trait]
 impl CrateRepository for InMemoryCrateRepository {
-    async fn find_or_create(
-        &self,
-        genre: &str,
-        role: Option<EnergyRole>,
-    ) -> Result<Crate, RepoError> {
+    async fn find_or_create(&self, spec: &CrateSpec) -> Result<Crate, RepoError> {
         let mut crates = self.crates.lock().expect("crate repo mutex poisoned");
         if let Some(existing) = crates
             .iter()
-            .find(|c| c.genre() == genre && c.energy_role() == role)
+            .find(|c| c.genre() == spec.genre && c.energy_role() == spec.role)
         {
             return Ok(existing.clone());
         }
         let created = Crate::new(
             CrateId::from_uuid(self.ids.new_id()),
-            genre.to_owned(),
-            role,
-            CrateOrigin::Auto,
+            spec.genre.clone(),
+            spec.role,
+            spec.origin,
         );
         crates.push(created.clone());
         Ok(created)

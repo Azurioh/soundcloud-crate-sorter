@@ -1,14 +1,25 @@
 import { useCallback, useState } from "react";
 import { RunControl } from "@/features/run/RunControl";
 import { CrateBrowser } from "@/features/crates/CrateBrowser";
+import { TriagePanel } from "@/features/triage/TriagePanel";
 import { ThemeProvider } from "@/shared/theme/theme-provider";
 import { ThemeToggle } from "@/shared/theme/theme-toggle";
 
-/** Root component: app shell + the run→crates reload wiring. */
+/** Root component: app shell + the run→triage→crates reload wiring. */
 export function App() {
-  // A monotonically-increasing key the run controls bump to ask the crate browser to reload.
-  const [reloadKey, setReloadKey] = useState(0);
-  const handleLibraryChanged = useCallback(() => setReloadKey((k) => k + 1), []);
+  // Two keys, not one. `runKey` marks work that changed the library *underneath* the triage queue
+  // (a scan or a classify), which the queue must re-read or it shows a stale "queue is clear".
+  // `crateKey` marks anything that changed crate membership. A triage decision bumps only the
+  // latter: it already knows which card it removed, and re-fetching the queue mid-session would
+  // reshuffle the deck under the user's cursor between swipes.
+  const [runKey, setRunKey] = useState(0);
+  const [crateKey, setCrateKey] = useState(0);
+
+  const handleRunFinished = useCallback(() => {
+    setRunKey((k) => k + 1);
+    setCrateKey((k) => k + 1);
+  }, []);
+  const handleTriageDecided = useCallback(() => setCrateKey((k) => k + 1), []);
 
   return (
     <ThemeProvider>
@@ -23,8 +34,9 @@ export function App() {
           </div>
         </header>
         <main className="mx-auto flex max-w-5xl flex-col gap-5 px-4 py-6">
-          <RunControl onLibraryChanged={handleLibraryChanged} />
-          <CrateBrowser reloadKey={reloadKey} />
+          <RunControl reloadKey={crateKey} onLibraryChanged={handleRunFinished} />
+          <TriagePanel reloadKey={runKey} onLibraryChanged={handleTriageDecided} />
+          <CrateBrowser reloadKey={crateKey} />
         </main>
       </div>
     </ThemeProvider>

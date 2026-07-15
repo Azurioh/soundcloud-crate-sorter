@@ -183,6 +183,7 @@ mod tests {
             confidence: Confidence::new(confidence).unwrap(),
             reason: ClassificationReason::GenreFromSourceTag,
             vibe_tags: Vec::new(),
+            alternatives: Vec::new(),
         }
     }
 
