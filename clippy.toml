@@ -1,0 +1,7 @@
+# Strict thresholds. The clean-build gate runs
+# `cargo clippy --workspace --all-targets -- -D warnings`, so every clippy warning is a hard error.
+
+# Signatures with many positional params are a smell — group them into a params struct.
+too-many-arguments-threshold = 5
+# Keep single functions readable.
+too-many-lines-threshold = 120

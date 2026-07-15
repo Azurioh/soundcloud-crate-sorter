@@ -1,0 +1,26 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+
+# Frontend (Tauri webview)
+ui/node_modules
+ui/dist
+ui/.vite
+
+# Secrets & local state — NEVER commit (ANTHROPIC_API_KEY lives here)
+.env
+.env.*
+!.env.example
+
+# Local app data (SQLite db + downloaded audio + exported crates)
+*.sqlite
+*.sqlite-*
+/data
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

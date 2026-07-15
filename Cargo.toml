@@ -1,0 +1,25 @@
+# Cargo workspace — one crate per Clean Architecture layer (constitution Principle VI).
+# The Dependency Rule is a compile-time guarantee: `domain` depends on nothing app-specific,
+# `application` on `domain` only, `adapters` on `application` (+ vendor crates), and `app`
+# (composition root + Tauri) is the sole crate that wires concrete adapters into use cases.
+#
+# Dependency versions are pinned by Cargo.lock (committed). Each crate declares only the
+# dependencies its layer is allowed to see, so a boundary violation (e.g. `domain` importing
+# reqwest) fails to compile rather than passing review.
+[workspace]
+resolver = "2"
+members = [
+    "crates/domain",
+    "crates/application",
+    "crates/adapters",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+rust-version = "1.80"
+
+# Release profile: keep the audio-analysis-free MVP lean; opt into thin LTO for the shipped binary.
+[profile.release]
+lto = "thin"
