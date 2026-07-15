@@ -1,300 +1,116 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* shadcn convention: :root = light, .dark = dark. Dark is the product default —
+   the ThemeProvider adds `.dark` on <html> unless the user selects light. */
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
+  --radius: 0.625rem;
+
+  /* Light */
+  --background: #f6f7f9;
+  --foreground: #1b1e24;
+  --card: #ffffff;
+  --card-foreground: #1b1e24;
+  --popover: #ffffff;
+  --popover-foreground: #1b1e24;
+  --primary: #ff5500; /* SoundCloud orange */
+  --primary-foreground: #ffffff;
+  --secondary: #eef0f3;
+  --secondary-foreground: #1b1e24;
+  --muted: #eef0f3;
+  --muted-foreground: #6b7280;
+  --accent: #e9ebef;
+  --accent-foreground: #1b1e24;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
   --border: #e2e5ea;
-  --text: #1b1e24;
-  --muted: #6b7280;
-  --accent: #ff5500; /* SoundCloud orange */
-  --accent-text: #ffffff;
-  --error-bg: #fdecea;
-  --error-border: #f5c2c0;
-  --error-text: #8a1c17;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --input: #e2e5ea;
+  --ring: #ff5500;
+
+  /* Semantic status/confidence tones. Each is the badge's *text* colour; the chip tints
+     itself from the same token at 15%, so the token must stay readable on that tint —
+     these are darker than the usual 500-weight ramp to clear 4.5:1 on a near-white chip.
+     --danger is not aliased to --destructive: the latter is tuned for solid fills. */
+  --success: #166534;
+  --warning: #92400e;
+  --danger: #b91c1c;
+  --info: #9a3412;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16181d;
-    --panel: #1f2229;
-    --border: #2c313a;
-    --text: #e8eaed;
-    --muted: #9aa0aa;
-    --error-bg: #3a1d1b;
-    --error-border: #6b2b27;
-    --error-text: #f6b8b4;
+.dark {
+  /* Dark DJ console (default) */
+  --background: #0b0d10;
+  --foreground: #e8eaed;
+  --card: #16181d;
+  --card-foreground: #e8eaed;
+  --popover: #16181d;
+  --popover-foreground: #e8eaed;
+  --primary: #ff5500;
+  --primary-foreground: #ffffff;
+  --secondary: #1f2229;
+  --secondary-foreground: #e8eaed;
+  --muted: #1f2229;
+  --muted-foreground: #9aa0aa;
+  --accent: #23262e;
+  --accent-foreground: #e8eaed;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #2c313a;
+  --input: #2c313a;
+  --ring: #ff5500;
+
+  /* On the dark console the chip tint is near-black, so the brighter ramp reads fine. */
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #f87171;
+  --info: #ff5500;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+
+  --font-sans: "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
   }
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-}
-
-.app {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 1.5rem 1rem 3rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.25rem;
-}
-
-.app__header h1 {
-  margin: 0;
-  font-size: 1.5rem;
-}
-
-.app__subtitle {
-  margin: 0.25rem 0 0;
-  color: var(--muted);
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1.25rem;
-}
-
-.panel__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.panel h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1.15rem;
-}
-
-.run-form label {
-  display: block;
-  font-size: 0.85rem;
-  color: var(--muted);
-  margin-bottom: 0.35rem;
-}
-
-.run-form__row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-input[type="url"] {
-  flex: 1 1 260px;
-  min-width: 0;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font-size: 0.95rem;
-}
-
-button {
-  padding: 0.6rem 1rem;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  min-height: 44px; /* comfortable tap target */
-}
-
-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-.panel__header button,
-.crate-card button {
-  background: transparent;
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
-.run-result {
-  margin: 0.75rem 0 0;
-  color: var(--muted);
-  font-size: 0.9rem;
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
-  gap: 0.5rem;
-  margin: 1rem 0 0;
-}
-
-.summary-stat {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.6rem;
-  text-align: center;
-}
-
-.summary-stat dt {
-  font-size: 0.75rem;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.summary-stat dd {
-  margin: 0.15rem 0 0;
-  font-size: 1.4rem;
-  font-weight: 700;
-}
-
-.error-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  background: var(--error-bg);
-  border: 1px solid var(--error-border);
-  color: var(--error-text);
-  border-radius: 8px;
-  padding: 0.6rem 0.85rem;
-  margin-bottom: 0.75rem;
-  font-size: 0.9rem;
-}
-
-.error-banner__dismiss {
-  background: transparent;
-  border: none;
-  color: inherit;
-  font-size: 1.25rem;
-  line-height: 1;
-  cursor: pointer;
-  min-height: auto;
-  padding: 0 0.25rem;
-}
-
-.crate-list {
-  list-style: none;
-  margin: 0.5rem 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.crate-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.crate-card__header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--bg);
-}
-
-.crate-card__header h3 {
-  margin: 0;
-  font-size: 1rem;
-}
-
-.crate-card__count {
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.table-scroll {
-  overflow-x: auto;
-}
-
-.track-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-
-.track-table th,
-.track-table td {
-  text-align: left;
-  padding: 0.5rem 1rem;
-  border-top: 1px solid var(--border);
-  white-space: nowrap;
-}
-
-.track-table th {
-  color: var(--muted);
-  font-weight: 600;
-  font-size: 0.8rem;
-}
-
-.empty {
-  color: var(--muted);
-  margin: 0.5rem 0 0;
-}
-
-.muted {
-  color: var(--muted);
-}
-
-.link-button {
-  background: transparent;
-  border: none;
-  color: var(--accent);
-  font-weight: 600;
-  padding: 0;
-  min-height: auto;
-  cursor: pointer;
-}
-
-.audit-row td {
-  background: var(--bg);
-}
-
-.audit-error {
-  color: var(--error-text);
-  font-size: 0.85rem;
-}
-
-.audit-trail {
-  list-style: none;
-  margin: 0;
-  padding: 0.25rem 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.audit-trail li {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: baseline;
-  font-size: 0.82rem;
-}
-
-.audit-trail__stage {
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  font-size: 0.72rem;
-  color: var(--accent);
-}
-
-.audit-trail__outcome {
-  color: var(--text);
-}
-
-.audit-trail__detail {
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  body {
+    margin: 0;
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
 }

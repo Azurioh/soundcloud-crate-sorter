@@ -1,21 +1,21 @@
 // Crate browsing view (T037): crates with their members, per-track confidence, and an expandable
 // audit trail per track ("why is this track in this crate?" — Principle VII / V6).
 import { useCallback, useEffect, useState } from "react";
-import {
-  listCrates,
-  trackAudit,
-  type AuditEvent,
-  type CrateView,
-  type TrackView,
-} from "../../shared/api";
-import { ErrorBanner } from "../../shared/ErrorBanner";
-import { toMessage } from "../../shared/errors";
+import { Inbox, RefreshCw } from "lucide-react";
+import { listCrates, type CrateView } from "@/shared/api";
+import { ErrorBanner } from "@/shared/ErrorBanner";
+import { toMessage } from "@/shared/errors";
+import { Button } from "@/shared/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/shared/ui/card";
+import { Skeleton } from "@/shared/ui/skeleton";
+import { CrateCard } from "@/features/crates/CrateCard";
 
 interface CrateBrowserProps {
   // Bumped by the run controls whenever the library changes, to trigger a reload.
   reloadKey: number;
 }
 
+/** Lists crates and their member tracks, with loading and empty states. */
 export function CrateBrowser({ reloadKey }: CrateBrowserProps) {
   const [crates, setCrates] = useState<CrateView[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -37,140 +37,42 @@ export function CrateBrowser({ reloadKey }: CrateBrowserProps) {
     void reload();
   }, [reload, reloadKey]);
 
+  const isEmpty = crates.length === 0 && !loading;
+
   return (
-    <section className="panel">
-      <div className="panel__header">
-        <h2>Crates</h2>
-        <button type="button" onClick={reload} disabled={loading}>
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle>Crates</CardTitle>
+        <Button type="button" variant="ghost" onClick={reload} disabled={loading}>
+          <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
           {loading ? "Loading…" : "Refresh"}
-        </button>
-      </div>
-      <ErrorBanner message={error} onDismiss={() => setError(null)} />
+        </Button>
+      </CardHeader>
+      <CardContent>
+        <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
-      {crates.length === 0 && !loading ? (
-        <p className="empty">No crates yet. Scan a profile and classify to build crates.</p>
-      ) : (
-        <ul className="crate-list">
-          {crates.map((crate) => (
-            <CrateCard key={crate.id} crate={crate} />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
+        {loading && crates.length === 0 && (
+          <div className="flex flex-col gap-3" role="status" aria-label="Loading crates">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        )}
 
-function CrateCard({ crate }: { crate: CrateView }) {
-  return (
-    <li className="crate-card">
-      <header className="crate-card__header">
-        <h3>{crate.name}</h3>
-        <span className="crate-card__count">{crate.members.length} tracks</span>
-      </header>
-      <div className="table-scroll">
-        <table className="track-table">
-          <thead>
-            <tr>
-              <th scope="col">Title</th>
-              <th scope="col">Artist</th>
-              <th scope="col">Confidence</th>
-              <th scope="col">Status</th>
-              <th scope="col" aria-label="Audit trail" />
-            </tr>
-          </thead>
-          <tbody>
-            {crate.members.map((track) => (
-              <TrackRow key={track.id} track={track} />
+        {isEmpty ? (
+          <div className="flex flex-col items-center gap-2 py-10 text-center">
+            <Inbox className="size-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">No crates yet. Scan a profile and classify to build crates.</p>
+          </div>
+        ) : (
+          <ul className="flex flex-col gap-4">
+            {crates.map((crate) => (
+              <li key={crate.id}>
+                <CrateCard crate={crate} />
+              </li>
             ))}
-          </tbody>
-        </table>
-      </div>
-    </li>
-  );
-}
-
-function TrackRow({ track }: { track: TrackView }) {
-  const [open, setOpen] = useState(false);
-  const [events, setEvents] = useState<AuditEvent[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [auditError, setAuditError] = useState<string | null>(null);
-  const confidence = track.confidence === null ? "—" : `${Math.round(track.confidence * 100)}%`;
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setAuditError(null);
-    try {
-      setEvents(await trackAudit(track.id));
-    } catch (e) {
-      // Leave events null so a retry re-fetches, rather than caching the failure as "no events".
-      setAuditError(toMessage(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [track.id]);
-
-  const toggle = useCallback(() => {
-    const next = !open;
-    setOpen(next);
-    if (next && events === null && !loading) {
-      void load();
-    }
-  }, [open, events, loading, load]);
-
-  return (
-    <>
-      <tr>
-        <td>{track.title}</td>
-        <td>{track.artist}</td>
-        <td>{confidence}</td>
-        <td>{track.status.replace(/_/g, " ")}</td>
-        <td>
-          <button type="button" className="link-button" onClick={toggle} aria-expanded={open}>
-            {open ? "Hide" : "Why?"}
-          </button>
-        </td>
-      </tr>
-      {open && (
-        <tr className="audit-row">
-          <td colSpan={5}>
-            {loading ? (
-              <span className="muted">Loading trail…</span>
-            ) : auditError !== null ? (
-              <span className="audit-error" role="alert">
-                Could not load the audit trail.{" "}
-                <button type="button" className="link-button" onClick={() => void load()}>
-                  Retry
-                </button>
-              </span>
-            ) : (
-              <AuditTrail events={events ?? []} />
-            )}
-          </td>
-        </tr>
-      )}
-    </>
-  );
-}
-
-function AuditTrail({ events }: { events: AuditEvent[] }) {
-  if (events.length === 0) {
-    return <span className="muted">No audit events recorded for this track yet.</span>;
-  }
-  return (
-    <ol className="audit-trail">
-      {events.map((event, index) => (
-        <li key={index}>
-          <span className="audit-trail__stage">{event.stage}</span>
-          <span className="audit-trail__outcome">
-            {event.kind} · {event.outcome}
-          </span>
-          <span className="audit-trail__detail">
-            {Object.entries(event.detail)
-              .map(([key, value]) => `${key}=${value}`)
-              .join("  ")}
-          </span>
-        </li>
-      ))}
-    </ol>
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }
