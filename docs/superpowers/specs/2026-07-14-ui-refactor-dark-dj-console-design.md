@@ -40,6 +40,11 @@ without touching behavior, data, or the boundary to the Rust core.
   (no Google Fonts link, no remote CSS). Fonts via `@fontsource-*` npm packages.
 - **Responsive.** Desktop-first (Tauri window) but must reflow down to a narrow window;
   tables scroll horizontally inside their own container; tap targets ≥ 44px.
+  - shadcn's defaults are 36px, so the primitives are adjusted: `Button` `default` → `h-11`,
+    `Button` `icon` → `size-11`, `Input` → `h-11`. Icon glyphs stay `size-4` — the button grows its
+    hit area, not the artwork. Inline text links in table rows (`Why?` / `Hide` / `Retry`, all
+    `variant="link"` + `h-auto p-0`) are exempt: 44px there would wreck the data-dense row rhythm.
+    The pre-refactor CSS enforced `min-height: 44px` on buttons, so this floor is restored, not new.
 - **Accessibility.** Keep `role="alert"` on the error banner, `aria-expanded` on the
   "Why?" toggle, `scope="col"` on table headers, visible focus states, dialog/collapsible
   semantics from shadcn primitives.
@@ -73,8 +78,10 @@ primitive inherits them.
 - **Semantic — status badges:** distinct color per track status (auto / triage / scanned /
   manually decided / deferred), derived from the `status` string.
 - **Typography:** Inter for UI; JetBrains Mono for all technical numerics.
-- **Light theme:** same tokens re-mapped; toggled via a header control and `prefers-color-scheme`
-  as the initial signal.
+- **Light theme:** same tokens re-mapped; toggled via a header control and remembered in
+  `localStorage`. **Dark is always the first-run default** — `prefers-color-scheme` is deliberately
+  NOT consulted, so every new user sees the dark console identity rather than a light app on a
+  light-mode OS. (Decided after the fidelity pass showed a light-mode OS opened the app in light.)
 
 Confidence is shown as a **color-coded badge with the mono percentage** (not a bar).
 
