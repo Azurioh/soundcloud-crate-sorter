@@ -6,19 +6,41 @@ version is flagged "confirm at build time".
 
 ## R1. Reading SoundCloud likes (no login)
 
+> **Corrected 2026-07-15 against the live API.** As first written, this section was wrong in two ways
+> and made scanning impossible — the app failed with "transport error reading SoundCloud likes" for
+> every profile. Both errors are recorded below rather than quietly overwritten: R1 claimed "confirmed
+> HIGH confidence" for an endpoint that returns 404, which is exactly the claim a future reader should
+> distrust. Its own follow-up ("validate the fields we consume against a live response") was the step
+> that would have caught this, and it was never carried out — the real-adapter contract test needs
+> `SC_TEST_PROFILE` plus network, so `cargo test` stayed green while the feature could never work.
+
 - **Decision**: Read public likes through the unofficial `api-v2.soundcloud.com` endpoint
-  `GET /users/{user_id}/likes/tracks?client_id={id}&limit=200&linked_partitioning=1`, following the
-  `next_href` cursor until absent. Resolve a profile URL to a user id via
+  `GET /users/{user_id}/track_likes?client_id={id}&limit=200&linked_partitioning=1`, following the
+  `next_href` cursor until absent **and re-attaching `client_id` to every cursor URL** (see below).
+  Resolve a profile URL to a user id via
   `GET /resolve?url=https://soundcloud.com/{username}&client_id={id}`. Obtain the `client_id` by
   extracting it from the web player's bundled JS at runtime (it rotates).
-- **Rationale**: This is the exact path `scdl` and similar tools use; confirmed HIGH confidence.
-  Likes are public by default, so no OAuth is needed for reading.
+- **Verified against the live API** (a 127-like public library):
+  - `GET /users/{id}/track_likes` → **200**. This is the endpoint to use: it returns tracks only.
+  - `GET /users/{id}/likes/tracks` → **404**. Originally recorded here; this path does not exist.
+  - `GET /users/{id}/likes` → 200, but mixes in playlist likes.
+  - `GET /users/{id}/favorites` → 404.
+- **Response shape**: the endpoint returns **likes, not tracks**. Each `collection` entry is
+  `{ created_at, kind: "like", track: { … } }` — the track object is *nested*, not the entry itself.
+  All consumed fields (`id`, `title`, `genre`, `duration`, `permalink_url`, `artwork_url`,
+  `user.username`) are present on the nested object.
+- **The cursor drops the `client_id`**: `next_href` comes back as
+  `…/track_likes?offset=…&limit=200` with no `client_id`. Following it verbatim is an anonymous
+  request → **401**, which reads as "profile is private". The id must be re-attached to every page.
+  SoundCloud emits a cursor even when the first page already returned the whole library, so this
+  broke *every* scan regardless of size.
+- **Rationale**: no OAuth is needed for reading — likes are public by default.
 - **Alternatives considered**: Official API (`api.soundcloud.com`) — rejected, app registration is
   gated (see R3). Offset pagination — rejected, deprecated by SoundCloud in 2020 (cursor only).
-- **Follow-ups**: client_id extraction must be refreshable (IDs rotate; rate ~60–80 req/min). Track
-  object schema is not officially documented — validate the fields we consume (`id`, `title`,
-  `user.username`, `genre`, `duration`, `permalink_url`, `artwork_url`) against a live response
-  during implementation.
+- **Follow-ups**: client_id extraction must be refreshable (IDs rotate; rate ~60–80 req/min). The
+  endpoint is unofficial and undocumented, so the shape above is a snapshot, not a contract: the
+  `real-adapters` likes contract test is the only thing that will notice when it next changes, and it
+  only runs when someone sets `SC_TEST_PROFILE`.
 
 ## R2. Audio download
 
