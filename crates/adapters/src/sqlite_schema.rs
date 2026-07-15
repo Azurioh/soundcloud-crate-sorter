@@ -1,11 +1,13 @@
-//! SQLite schema + migrations (T016). One database file holds tracks, crates, the audit log, and
-//! settings.
+//! SQLite schema + migrations (T016). One database file holds tracks, crates, classification
+//! decisions, the audit log, and settings.
 //!
-//! Note on classification decisions: the port contract states that an `AuditEvent` is a *superset*
-//! of a classification decision. Rather than maintain a separate `classification_decisions` table
-//! that duplicates the audit trail (dead schema, YAGNI), each decision is recorded as an
-//! `audit_events` row (stage=classify, kind=classification) — which already answers
-//! "why is this track in this crate?" (Principle VII).
+//! Note on classification decisions: an `AuditEvent` records the same facts, so while nothing read
+//! decisions back this table was deliberately omitted as duplicated, dead schema. Triage (US2) is
+//! the first reader — it rebuilds a card's top suggestion and alternatives (FR-015) for a track that
+//! dropped its crate on the way into triage — and reconstructing that from the append-only trail
+//! would mean parsing stringly-typed `detail` JSON, making the audit trail load-bearing application
+//! state. Decisions therefore get their own typed table; the audit trail keeps its own record for
+//! observability (Principle VII).
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -46,6 +48,19 @@ CREATE TABLE IF NOT EXISTS tracks (
     status           TEXT NOT NULL,
     local_audio_path TEXT
 );
+
+CREATE TABLE IF NOT EXISTS classification_decisions (
+    id           TEXT PRIMARY KEY,
+    track_id     TEXT NOT NULL REFERENCES tracks(id),
+    crate_id     TEXT NOT NULL REFERENCES crates(id),
+    source       TEXT NOT NULL,
+    confidence   REAL,
+    reason       TEXT NOT NULL,
+    alternatives TEXT NOT NULL DEFAULT '[]',
+    decided_at   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_track ON classification_decisions(track_id);
 
 CREATE TABLE IF NOT EXISTS audit_events (
     id          TEXT PRIMARY KEY,

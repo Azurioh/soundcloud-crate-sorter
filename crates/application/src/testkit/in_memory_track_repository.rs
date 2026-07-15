@@ -23,6 +23,16 @@ impl InMemoryTrackRepository {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Returns every track currently in `status`.
+    fn list_with_status(&self, status: TrackStatus) -> Vec<Track> {
+        let tracks = self.tracks.lock().expect("track repo mutex poisoned");
+        tracks
+            .iter()
+            .filter(|track| track.status() == status)
+            .cloned()
+            .collect()
+    }
 }
 
 #[async_trait]
@@ -74,13 +84,11 @@ impl TrackRepository for InMemoryTrackRepository {
     }
 
     async fn list_in_triage(&self) -> Result<Vec<Track>, RepoError> {
-        let tracks = self.tracks.lock().expect("track repo mutex poisoned");
-        let queued = tracks
-            .iter()
-            .filter(|t| matches!(t.status(), TrackStatus::InTriage))
-            .cloned()
-            .collect();
-        Ok(queued)
+        Ok(self.list_with_status(TrackStatus::InTriage))
+    }
+
+    async fn list_deferred(&self) -> Result<Vec<Track>, RepoError> {
+        Ok(self.list_with_status(TrackStatus::Deferred))
     }
 
     async fn list_by_crate(&self, crate_id: &CrateId) -> Result<Vec<Track>, RepoError> {

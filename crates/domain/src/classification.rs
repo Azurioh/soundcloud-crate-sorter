@@ -43,6 +43,20 @@ impl DecisionSource {
             Self::Manual => "manual",
         }
     }
+
+    /// Parses a persistence token back into a decision source.
+    ///
+    /// # Errors
+    /// Returns `None` for an unrecognized token — the caller decides how to treat corruption rather
+    /// than defaulting to `Auto`, which would silently disown a human's decision.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "auto" => Some(Self::Auto),
+            "manual" => Some(Self::Manual),
+            _ => None,
+        }
+    }
 }
 
 /// The evidence behind a classification — the human-answerable "why".
@@ -77,6 +91,37 @@ impl ClassificationReason {
             Self::ClassifierUnavailable => "classifier_unavailable",
         }
     }
+
+    /// Parses a persistence token back into a reason.
+    ///
+    /// # Errors
+    /// Returns `None` for an unrecognized token — an unreadable reason must surface as an error, not
+    /// collapse into a plausible-looking one that would make the audit trail lie.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        match token {
+            "genre_from_source_tag" => Some(Self::GenreFromSourceTag),
+            "genre_from_ai" => Some(Self::GenreFromAi),
+            "audio_features" => Some(Self::AudioFeatures),
+            "manual_pick" => Some(Self::ManualPick),
+            "likely_non_music" => Some(Self::LikelyNonMusic),
+            "classifier_unavailable" => Some(Self::ClassifierUnavailable),
+            _ => None,
+        }
+    }
+}
+
+/// A genre the classifier considered but did not choose, with the confidence it carried.
+///
+/// Held as a **genre name rather than a `CrateId`** on purpose: a merely-considered genre must not
+/// bring a crate into existence. Crates are created from the genres actually present in the library
+/// (FR-009), so an alternative materializes into a crate only if a human picks it in triage.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GenreSuggestion {
+    /// The candidate genre.
+    pub genre: String,
+    /// The confidence the classifier gave it.
+    pub confidence: Confidence,
 }
 
 /// A single, timestamped record of a track being routed to a crate. History is retained; the
@@ -89,6 +134,7 @@ pub struct ClassificationDecision {
     source: DecisionSource,
     confidence: Option<Confidence>,
     reason: ClassificationReason,
+    alternatives: Vec<GenreSuggestion>,
     decided_at: Timestamp,
 }
 
@@ -107,6 +153,8 @@ pub struct NewDecision {
     pub confidence: Option<Confidence>,
     /// Why this crate was chosen.
     pub reason: ClassificationReason,
+    /// Runner-up genres the classifier offered — the triage card's alternative chips (FR-015).
+    pub alternatives: Vec<GenreSuggestion>,
     /// When the decision was made (from `ClockPort`).
     pub decided_at: Timestamp,
 }
@@ -122,6 +170,7 @@ impl ClassificationDecision {
             source: fields.source,
             confidence: fields.confidence,
             reason: fields.reason,
+            alternatives: fields.alternatives,
             decided_at: fields.decided_at,
         }
     }
@@ -162,9 +211,62 @@ impl ClassificationDecision {
         self.reason
     }
 
+    /// The runner-up genres offered alongside the chosen crate.
+    #[must_use]
+    pub fn alternatives(&self) -> &[GenreSuggestion] {
+        &self.alternatives
+    }
+
     /// When it was decided.
     #[must_use]
     pub const fn decided_at(&self) -> Timestamp {
         self.decided_at
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suggestion(genre: &str, confidence: f32) -> GenreSuggestion {
+        GenreSuggestion {
+            genre: genre.to_owned(),
+            confidence: Confidence::new(confidence).expect("in-range confidence"),
+        }
+    }
+
+    fn decision(alternatives: Vec<GenreSuggestion>) -> ClassificationDecision {
+        ClassificationDecision::new(NewDecision {
+            id: DecisionId::from_uuid(Uuid::from_u128(1)),
+            track_id: TrackId::from_uuid(Uuid::from_u128(2)),
+            crate_id: CrateId::from_uuid(Uuid::from_u128(3)),
+            source: DecisionSource::Auto,
+            confidence: Some(Confidence::new(0.4).expect("in-range confidence")),
+            reason: ClassificationReason::GenreFromAi,
+            alternatives,
+            decided_at: Timestamp::from_millis(1_000),
+        })
+    }
+
+    #[test]
+    fn alternatives_round_trip_through_the_constructor() {
+        let decided = decision(vec![suggestion("Techno", 0.31), suggestion("Ambient", 0.2)]);
+        let genres: Vec<&str> = decided
+            .alternatives()
+            .iter()
+            .map(|a| a.genre.as_str())
+            .collect();
+        assert_eq!(genres, vec!["Techno", "Ambient"]);
+    }
+
+    #[test]
+    fn a_decision_without_alternatives_exposes_an_empty_slice() {
+        assert!(decision(Vec::new()).alternatives().is_empty());
+    }
+
+    #[test]
+    fn decision_source_and_reason_tokens_are_stable() {
+        assert_eq!(DecisionSource::Manual.as_str(), "manual");
+        assert_eq!(ClassificationReason::ManualPick.as_str(), "manual_pick");
     }
 }

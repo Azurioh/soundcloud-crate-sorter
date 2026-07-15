@@ -109,8 +109,11 @@ impl TrackRepository for SqliteTrackRepository {
     }
 
     async fn list_in_triage(&self) -> Result<Vec<Track>, RepoError> {
-        let sql = format!("SELECT {SELECT_COLUMNS} FROM tracks WHERE status = 'in_triage'");
-        self.query_tracks(&sql, [])
+        self.query_by_status(TrackStatus::InTriage)
+    }
+
+    async fn list_deferred(&self) -> Result<Vec<Track>, RepoError> {
+        self.query_by_status(TrackStatus::Deferred)
     }
 
     async fn list_by_crate(&self, crate_id: &CrateId) -> Result<Vec<Track>, RepoError> {
@@ -120,6 +123,13 @@ impl TrackRepository for SqliteTrackRepository {
 }
 
 impl SqliteTrackRepository {
+    /// Selects every track in `status`, binding the domain's own persistence token rather than
+    /// repeating it as a SQL literal (so renaming the token cannot silently empty this query).
+    fn query_by_status(&self, status: TrackStatus) -> Result<Vec<Track>, RepoError> {
+        let sql = format!("SELECT {SELECT_COLUMNS} FROM tracks WHERE status = ?1");
+        self.query_tracks(&sql, [status.as_str()])
+    }
+
     /// Runs a SELECT and maps every row to a `Track`.
     fn query_tracks<P: rusqlite::Params>(
         &self,

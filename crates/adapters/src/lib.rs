@@ -6,6 +6,7 @@ pub mod anthropic_genre_vibe_classifier;
 pub mod internal_api_likes_source;
 pub mod sqlite_audit_log;
 pub mod sqlite_crate_repository;
+pub mod sqlite_decision_repository;
 pub mod sqlite_schema;
 pub mod sqlite_settings_repository;
 pub mod sqlite_support;

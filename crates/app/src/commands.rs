@@ -6,12 +6,19 @@
 
 use std::collections::BTreeMap;
 
+use application::use_cases::adjust_threshold::{AdjustThresholdError, ThresholdSplit};
+use application::use_cases::apply_manual_decision::{
+    ApplyManualDecisionError, TriageAction, TriagedTrack,
+};
 use application::use_cases::classify_library::{ClassifyLibraryError, ClassifyLibrarySummary};
+use application::use_cases::resume_deferred::ResumeDeferredError;
 use application::use_cases::scan_likes::{ScanError, ScanSummary};
-use domain::audit::AuditEvent;
-use domain::crate_::Crate;
+use domain::audit::{AuditEvent, RunId};
+use domain::classification::ClassificationDecision;
+use domain::confidence::ConfidenceThreshold;
+use domain::crate_::{Crate, CrateId};
 use domain::track::{Track, TrackId, TrackStatus};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
 
@@ -92,6 +99,91 @@ pub struct AuditEventView {
     pub detail: BTreeMap<String, String>,
     /// When it occurred (Unix ms).
     pub occurred_at: i64,
+}
+
+/// A crate as an assignable option (the triage picker and the alternative chips).
+#[derive(Debug, Serialize)]
+pub struct CrateOptionView {
+    /// Crate id (string).
+    pub id: String,
+    /// Display name (e.g. "Deep House · Peak").
+    pub name: String,
+}
+
+/// A runner-up genre offered on a triage card. Carries the **genre, not a crate id** — the crate is
+/// created only if the user picks the chip (FR-009).
+#[derive(Debug, Serialize)]
+pub struct GenreSuggestionView {
+    /// The candidate genre.
+    pub genre: String,
+    /// The confidence the classifier gave it, in `[0.0, 1.0]`.
+    pub confidence: f32,
+}
+
+/// One card in the triage queue: the track, its preview, the top suggestion and the alternatives
+/// (FR-015).
+#[derive(Debug, Serialize)]
+pub struct TriageCardView {
+    /// The queued track.
+    pub track: TrackView,
+    /// Permalink, used by the card's audio preview.
+    pub permalink_url: String,
+    /// Artwork URL, if any.
+    pub artwork_url: Option<String>,
+    /// The crate the classifier suggested — `None` when it never reached one.
+    pub suggestion: Option<CrateOptionView>,
+    /// Runner-up genres, as chips.
+    pub alternatives: Vec<GenreSuggestionView>,
+}
+
+/// The outcome of one triage action.
+#[derive(Debug, Serialize)]
+pub struct TriageResultView {
+    /// The track's new status token.
+    pub status: String,
+    /// The crate it was filed into (`None` when deferred).
+    pub crate_id: Option<String>,
+}
+
+/// How a candidate threshold would divide the library (FR-013).
+#[derive(Debug, Serialize)]
+pub struct ThresholdSplitView {
+    /// Tracks that would be filed automatically.
+    pub auto: usize,
+    /// Tracks that would go to triage.
+    pub manual: usize,
+    /// Tracks a human already decided — never re-evaluated.
+    pub preserved: usize,
+}
+
+/// The user-adjustable settings the UI shows.
+#[derive(Debug, Serialize)]
+pub struct SettingsView {
+    /// The current confidence cutoff, in `[0.0, 1.0]`.
+    pub confidence_threshold: f32,
+    /// Whether opt-in audio download is enabled.
+    pub download_enabled: bool,
+}
+
+/// A triage action as sent by the frontend. Mirrors the use case's `TriageAction` at the edge so no
+/// domain type is named in the webview's payload.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TriageActionInput {
+    /// Take the suggested crate.
+    AcceptSuggestion,
+    /// File into an existing crate (alternative chip resolved to a crate, or the picker).
+    AssignToCrate {
+        /// The chosen crate id.
+        crate_id: String,
+    },
+    /// File into `genre`, creating the crate if needed.
+    CreateCrate {
+        /// The genre to file under.
+        genre: String,
+    },
+    /// Put the track back for a later session.
+    Defer,
 }
 
 /// Counts of tracks by status, plus the crate count.
@@ -190,6 +282,273 @@ pub async fn track_audit(
         .await
         .map_err(|_| "Could not read the audit trail.".to_owned())?;
     Ok(events.iter().map(audit_event_view).collect())
+}
+
+/// Lists the manual triage queue: each card with its suggestion and alternatives (FR-015).
+///
+/// # Errors
+/// A neutral message string when the repositories cannot be read.
+#[tauri::command]
+pub async fn list_triage_queue(state: State<'_, AppState>) -> Result<Vec<TriageCardView>, String> {
+    let queued = state.tracks.list_in_triage().await.map_err(repo_message)?;
+    let mut cards = Vec::with_capacity(queued.len());
+    for track in queued {
+        let decision = state
+            .decisions
+            .find_latest_for_track(track.id())
+            .await
+            .map_err(repo_message)?;
+        let suggestion = match &decision {
+            Some(decision) => suggested_crate(&state, decision).await?,
+            None => None,
+        };
+        cards.push(triage_card_view(&track, decision.as_ref(), suggestion));
+    }
+    Ok(cards)
+}
+
+/// Applies one triage action to one track (FR-016).
+///
+/// # Errors
+/// A neutral message string when the track/crate is unknown or persistence fails.
+#[tauri::command]
+pub async fn apply_triage_action(
+    state: State<'_, AppState>,
+    track_id: String,
+    action: TriageActionInput,
+) -> Result<TriageResultView, String> {
+    let track_id = parse_track_id(&track_id)?;
+    let action = parse_action(action)?;
+    let result = state
+        .apply_manual_decision
+        .execute(new_run_id(&state), &track_id, action)
+        .await
+        .map_err(triage_error_message)?;
+    Ok(triage_result_view(&result))
+}
+
+/// Lists every crate as an assignable option (the triage picker).
+///
+/// # Errors
+/// A neutral message string when the repositories cannot be read.
+#[tauri::command]
+pub async fn list_crate_options(
+    state: State<'_, AppState>,
+) -> Result<Vec<CrateOptionView>, String> {
+    let crates = state.crates.list().await.map_err(repo_message)?;
+    Ok(crates.iter().map(crate_option_view).collect())
+}
+
+/// Returns how many tracks are deferred, awaiting a later triage session.
+///
+/// # Errors
+/// A neutral message string when the repositories cannot be read.
+#[tauri::command]
+pub async fn count_deferred(state: State<'_, AppState>) -> Result<usize, String> {
+    let deferred = state.tracks.list_deferred().await.map_err(repo_message)?;
+    Ok(deferred.len())
+}
+
+/// Puts every deferred track back on the triage queue.
+///
+/// # Errors
+/// A neutral message string when persistence fails.
+#[tauri::command]
+pub async fn resume_deferred(state: State<'_, AppState>) -> Result<usize, String> {
+    state
+        .resume_deferred
+        .execute()
+        .await
+        .map_err(resume_error_message)
+}
+
+/// Returns the current settings (the threshold the slider starts from).
+///
+/// # Errors
+/// A neutral message string when the settings cannot be read.
+#[tauri::command]
+pub async fn get_settings(state: State<'_, AppState>) -> Result<SettingsView, String> {
+    let settings = state.settings.load().await.map_err(repo_message)?;
+    Ok(SettingsView {
+        confidence_threshold: settings.confidence_threshold().value(),
+        download_enabled: settings.download_enabled(),
+    })
+}
+
+/// Previews the auto-versus-manual split for `threshold` without committing it (FR-013).
+///
+/// # Errors
+/// A neutral message string when the threshold is out of range or the library cannot be read.
+#[tauri::command]
+pub async fn preview_threshold(
+    state: State<'_, AppState>,
+    threshold: f32,
+) -> Result<ThresholdSplitView, String> {
+    let threshold = parse_threshold(threshold)?;
+    let split = state
+        .adjust_threshold
+        .preview(threshold)
+        .await
+        .map_err(threshold_error_message)?;
+    Ok(threshold_split_view(split))
+}
+
+/// Commits `threshold` and re-routes the library, preserving manual decisions (FR-013, T047).
+///
+/// # Errors
+/// A neutral message string when the threshold is out of range or persistence fails.
+#[tauri::command]
+pub async fn update_threshold(
+    state: State<'_, AppState>,
+    threshold: f32,
+) -> Result<ThresholdSplitView, String> {
+    let threshold = parse_threshold(threshold)?;
+    let split = state
+        .adjust_threshold
+        .apply(threshold)
+        .await
+        .map_err(threshold_error_message)?;
+    Ok(threshold_split_view(split))
+}
+
+/// Mints the run id correlating the audit events of one UI-triggered action.
+fn new_run_id(state: &State<'_, AppState>) -> RunId {
+    RunId::from_uuid(state.ids.new_id())
+}
+
+/// Resolves a decision's chosen crate into a display option for the card's top suggestion.
+async fn suggested_crate(
+    state: &State<'_, AppState>,
+    decision: &ClassificationDecision,
+) -> Result<Option<CrateOptionView>, String> {
+    let crate_ = state
+        .crates
+        .find_by_id(decision.crate_id())
+        .await
+        .map_err(repo_message)?;
+    Ok(crate_.as_ref().map(crate_option_view))
+}
+
+/// Parses a track id from the frontend.
+fn parse_track_id(raw: &str) -> Result<TrackId, String> {
+    Uuid::parse_str(raw)
+        .map(TrackId::from_uuid)
+        .map_err(|_| "Invalid track id.".to_owned())
+}
+
+/// Parses and range-checks a threshold from the frontend.
+fn parse_threshold(raw: f32) -> Result<ConfidenceThreshold, String> {
+    ConfidenceThreshold::new(raw).map_err(|_| "Threshold must be between 0 and 1.".to_owned())
+}
+
+/// Maps the frontend's action payload onto the use case's action.
+fn parse_action(input: TriageActionInput) -> Result<TriageAction, String> {
+    match input {
+        TriageActionInput::AcceptSuggestion => Ok(TriageAction::AcceptSuggestion),
+        TriageActionInput::Defer => Ok(TriageAction::Defer),
+        TriageActionInput::CreateCrate { genre } => validate_genre(genre),
+        TriageActionInput::AssignToCrate { crate_id } => Uuid::parse_str(&crate_id)
+            .map(|id| TriageAction::AssignToCrate(CrateId::from_uuid(id)))
+            .map_err(|_| "Invalid crate id.".to_owned()),
+    }
+}
+
+/// Rejects a blank crate name before it becomes an unnameable crate the user cannot find again.
+fn validate_genre(genre: String) -> Result<TriageAction, String> {
+    if genre.trim().is_empty() {
+        return Err("A crate needs a name.".to_owned());
+    }
+    Ok(TriageAction::CreateCrate {
+        genre: genre.trim().to_owned(),
+    })
+}
+
+/// Maps a domain crate onto its assignable option.
+fn crate_option_view(crate_: &Crate) -> CrateOptionView {
+    CrateOptionView {
+        id: crate_.id().to_string(),
+        name: crate_.display_name(),
+    }
+}
+
+/// Maps a queued track plus its latest decision onto a triage card.
+fn triage_card_view(
+    track: &Track,
+    decision: Option<&ClassificationDecision>,
+    suggestion: Option<CrateOptionView>,
+) -> TriageCardView {
+    let alternatives = decision
+        .map(|decision| {
+            decision
+                .alternatives()
+                .iter()
+                .map(|alternative| GenreSuggestionView {
+                    genre: alternative.genre.clone(),
+                    confidence: alternative.confidence.value(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    TriageCardView {
+        track: track_view(track),
+        permalink_url: track.permalink_url().to_owned(),
+        artwork_url: track.artwork_url().map(str::to_owned),
+        suggestion,
+        alternatives,
+    }
+}
+
+/// Maps a triage outcome onto its view.
+fn triage_result_view(result: &TriagedTrack) -> TriageResultView {
+    TriageResultView {
+        status: result.track.status().as_str().to_owned(),
+        crate_id: result.crate_id.map(|id| id.to_string()),
+    }
+}
+
+/// Maps a threshold split onto its view.
+fn threshold_split_view(split: ThresholdSplit) -> ThresholdSplitView {
+    ThresholdSplitView {
+        auto: split.auto,
+        manual: split.manual,
+        preserved: split.preserved,
+    }
+}
+
+/// Neutral, secret-free message for a triage failure. The three not-found arms are actionable, so
+/// they keep their own wording; persistence failures stay generic.
+fn triage_error_message(error: ApplyManualDecisionError) -> String {
+    match error {
+        ApplyManualDecisionError::TrackNotFound => {
+            "That track is no longer in the library.".to_owned()
+        }
+        ApplyManualDecisionError::CrateNotFound => "That crate no longer exists.".to_owned(),
+        ApplyManualDecisionError::NoSuggestion => {
+            "This track has no suggestion yet — pick a crate instead.".to_owned()
+        }
+        ApplyManualDecisionError::Repo(_) => "Could not save the decision.".to_owned(),
+        ApplyManualDecisionError::Audit(_) => {
+            "Could not record the decision in the audit log.".to_owned()
+        }
+    }
+}
+
+/// Neutral, secret-free message for a threshold failure.
+fn threshold_error_message(error: AdjustThresholdError) -> String {
+    match error {
+        AdjustThresholdError::Repo(_) => "Could not read or save library data.".to_owned(),
+        AdjustThresholdError::Route(_) => {
+            "Could not re-file a track at the new threshold.".to_owned()
+        }
+    }
+}
+
+/// Neutral, secret-free message for a resume failure.
+fn resume_error_message(error: ResumeDeferredError) -> String {
+    match error {
+        ResumeDeferredError::Repo(_) => "Could not restore the deferred tracks.".to_owned(),
+        ResumeDeferredError::Audit(_) => "Could not record the resume in the audit log.".to_owned(),
+    }
 }
 
 /// Maps a scan summary onto its view.

@@ -30,6 +30,14 @@ pub fn run() {
             commands::list_crates,
             commands::run_summary,
             commands::track_audit,
+            commands::list_triage_queue,
+            commands::apply_triage_action,
+            commands::list_crate_options,
+            commands::count_deferred,
+            commands::resume_deferred,
+            commands::get_settings,
+            commands::preview_threshold,
+            commands::update_threshold,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");

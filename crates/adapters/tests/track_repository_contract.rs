@@ -8,10 +8,10 @@ use adapters::sqlite_crate_repository::SqliteCrateRepository;
 use adapters::sqlite_schema::SqliteDatabase;
 use adapters::sqlite_track_repository::SqliteTrackRepository;
 use adapters::uuid_id_provider::UuidIdProvider;
-use application::ports::crate_repository::CrateRepository;
+use application::ports::crate_repository::{CrateRepository, CrateSpec};
 use application::ports::id_provider::IdProvider;
 use application::testkit::in_memory_track_repository::InMemoryTrackRepository;
-use domain::crate_::CrateId;
+use domain::crate_::{CrateId, CrateOrigin};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -28,7 +28,11 @@ async fn sqlite_track_repository_honors_contract() {
     let crates = SqliteCrateRepository::new(db.connection(), ids);
     // The tracks.crate_id FK requires a real crate row.
     let crate_ = crates
-        .find_or_create("House", None)
+        .find_or_create(&CrateSpec {
+            genre: "House".to_owned(),
+            role: None,
+            origin: CrateOrigin::Auto,
+        })
         .await
         .expect("seed crate");
     let repo = SqliteTrackRepository::new(db.connection());

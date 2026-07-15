@@ -248,6 +248,16 @@ impl Track {
         }
     }
 
+    /// Returns a copy put back into the triage queue (`Deferred → InTriage`), keeping the
+    /// confidence and vibe the track already carried — resuming is not re-deciding.
+    #[must_use]
+    pub fn returned_to_triage(&self) -> Self {
+        Self {
+            status: TrackStatus::InTriage,
+            ..self.clone()
+        }
+    }
+
     /// Whether a human has already decided this track (must not be re-presented, FR-018).
     #[must_use]
     pub fn is_manually_decided(&self) -> bool {

@@ -114,18 +114,29 @@ Frontend: `ui/`. Tests: `tests/contract`, `tests/integration`, plus `#[cfg(test)
 
 ### Tests
 
-- [ ] T039 [P] [US2] Unit tests for `ApplyManualDecision` + `list_in_triage` with fakes
+- [X] T039 [P] [US2] Unit tests for `ApplyManualDecision` + `list_in_triage` with fakes
 
 ### Implementation
 
-- [ ] T040 [US2] `ApplyManualDecision` use case (accept / pick alt / create crate / defer; persist; audit) in `crates/application/src/use_cases/apply_manual_decision.rs`
-- [ ] T041 [US2] `TrackRepository.list_in_triage` query in `crates/adapters/src/sqlite_track_repository.rs`
-- [ ] T042 [US2] Tauri commands: triage actions, create-crate-on-the-fly, adjust threshold (+ live auto/manual split preview) in `crates/app/src/commands.rs`
-- [ ] T043 [P] [US2] UI swipe cards (`motion` + `@use-gesture/react`): audio preview, top suggestion, alt chips, full searchable picker in `ui/src/features/triage/SwipeDeck.tsx`
-- [ ] T044 [P] [US2] UI dense assignment table (`@tanstack/react-table` + Virtual) sharing the commit-assignment action in `ui/src/features/triage/AssignmentTable.tsx`
-- [ ] T045 [US2] Keyboard shortcuts (`react-hotkeys-hook`) → accept / alt-1..3 / picker / defer in `ui/src/features/triage/`
-- [ ] T046 [US2] Emit audit events for triage actions (from→to crate + timestamp)
-- [ ] T047 [US2] Threshold re-evaluation preserves `ManuallyDecided` (idempotency, Principle IV) in `RouteToTriage`
+- [X] T040 [US2] `ApplyManualDecision` use case (accept / pick alt / create crate / defer; persist; audit) in `crates/application/src/use_cases/apply_manual_decision.rs`
+- [X] T041 [US2] `TrackRepository.list_in_triage` query in `crates/adapters/src/sqlite_track_repository.rs`
+- [X] T042 [US2] Tauri commands: triage actions, create-crate-on-the-fly, adjust threshold (+ live auto/manual split preview) in `crates/app/src/commands.rs`
+- [X] T043 [P] [US2] UI swipe cards (`motion` + `@use-gesture/react`): audio preview, top suggestion, alt chips, full searchable picker in `ui/src/features/triage/SwipeDeck.tsx`
+- [X] T044 [P] [US2] UI dense assignment table (`@tanstack/react-table` + Virtual) sharing the commit-assignment action in `ui/src/features/triage/AssignmentTable.tsx`
+- [X] T045 [US2] Keyboard shortcuts (`react-hotkeys-hook`) → accept / alt-1..3 / picker / defer in `ui/src/features/triage/`
+- [X] T046 [US2] Emit audit events for triage actions (from→to crate + timestamp)
+- [X] T047 [US2] Threshold re-evaluation preserves `ManuallyDecided` (idempotency, Principle IV) in `RouteToTriage`
+
+### Added during US2 implementation (not in the original breakdown)
+
+FR-015 needs a triage card's top suggestion + alternatives, but a triaged track drops its crate and
+nothing persisted the classifier's conclusion — so the queue had nothing to rebuild a card from.
+
+- [X] T047a [US2] Revive `ClassificationDecision`: `DecisionRepository` port + `classification_decisions` table + `sqlite-decision.repository` + in-memory fake + contract suite (both sides). `ClassifyTrack` now persists the decision and keeps the runners-up (`GenreSuggestion`, genre-not-crate so a guessed alternative never creates an empty crate — FR-009)
+- [X] T047b [US2] `CrateSpec { genre, role, origin }` on `CrateRepository.find_or_create` so a crate created in triage is recorded as `CrateOrigin::Manual` (data-model); an existing crate keeps its original origin
+- [X] T047c [US2] `AdjustThreshold` use case: `preview` (FR-013 split, commits nothing) + `apply` (persist + re-route by replaying stored decisions). Closes the gap where `ClassifyLibrary` only processes `Scanned` tracks, so a threshold change moved nothing
+- [X] T047d [US2] `ResumeDeferred` use case + `TrackRepository.list_deferred` + `Track::returned_to_triage` — the data-model's `Deferred → InTriage` edge had no implementation, so a deferred track was unreachable forever
+- [X] T047e [US2] Integration test: the US2 slice (classify → triage → decide → re-run) against real SQLite in `crates/adapters/tests/triage_pipeline.rs`
 
 **Checkpoint**: US1 + US2 — full metadata-only workflow, uncertain tracks resolvable and durable.
 
@@ -233,6 +244,6 @@ Foundational is done — they touch different files — but US5 must follow US4.
 
 ## Task Summary
 
-- **Total**: 73 tasks. Setup 6 · Foundational 18 · US1 14 · US2 9 · US4 11 · US5 6 · Polish 9.
+- **Total**: 78 tasks. Setup 6 · Foundational 18 · US1 14 · US2 14 · US4 11 · US5 6 · Polish 9.
 - **Test tasks**: contract + unit + integration throughout (constitution Principle VI).
 - **MVP scope**: T001–T038 (Setup + Foundational + US1).

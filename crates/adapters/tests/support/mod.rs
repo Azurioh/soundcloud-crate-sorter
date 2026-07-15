@@ -7,7 +7,8 @@
 #![allow(dead_code)]
 
 use application::ports::audit_log::AuditLogPort;
-use application::ports::crate_repository::CrateRepository;
+use application::ports::crate_repository::{CrateRepository, CrateSpec};
+use application::ports::decision_repository::DecisionRepository;
 use application::ports::genre_vibe_classifier::{ClassificationInput, GenreVibeClassifierPort};
 use application::ports::likes_source::LikesSourcePort;
 use application::ports::repo_error::RepoError;
@@ -17,8 +18,12 @@ use domain::audit::{
     AuditDetail, AuditEvent, AuditEventId, AuditKind, AuditOutcome, NewAuditEvent, PipelineStage,
     RunId,
 };
+use domain::classification::{
+    ClassificationDecision, ClassificationReason, DecisionId, DecisionSource, GenreSuggestion,
+    NewDecision,
+};
 use domain::confidence::{Confidence, ConfidenceThreshold};
-use domain::crate_::CrateId;
+use domain::crate_::{CrateId, CrateOrigin};
 use domain::settings::{ExportMode, Settings};
 use domain::timestamp::Timestamp;
 use domain::track::{LikedTrack, Track, TrackId, TrackStatus};
@@ -96,6 +101,32 @@ pub async fn track_repository_suite(repo: &dyn TrackRepository, existing_crate_i
     let in_triage = repo.list_in_triage().await.expect("list triage");
     assert!(in_triage.iter().any(|t| t.id() == triaged.id()));
 
+    // Deferring moves a track off the queue and onto the deferred list — the two are disjoint, so a
+    // deferred track neither reappears in the current session nor drops out of the library's
+    // unfinished work.
+    let deferred = triaged.deferred();
+    repo.upsert(&deferred).await.expect("upsert deferred");
+    let in_triage = repo.list_in_triage().await.expect("list triage");
+    assert!(!in_triage.iter().any(|t| t.id() == deferred.id()));
+    let deferred_list = repo.list_deferred().await.expect("list deferred");
+    assert!(deferred_list.iter().any(|t| t.id() == deferred.id()));
+
+    // Resuming puts it back on the queue.
+    repo.upsert(&deferred.returned_to_triage())
+        .await
+        .expect("upsert resumed");
+    assert!(repo
+        .list_in_triage()
+        .await
+        .expect("list triage")
+        .iter()
+        .any(|t| t.id() == deferred.id()));
+    assert!(repo
+        .list_deferred()
+        .await
+        .expect("list deferred")
+        .is_empty());
+
     // Members of a crate.
     let members = repo
         .list_by_crate(&existing_crate_id)
@@ -104,14 +135,24 @@ pub async fn track_repository_suite(repo: &dyn TrackRepository, existing_crate_i
     assert!(members.iter().any(|t| t.id() == track.id()));
 }
 
-/// `CrateRepository` contract: dynamic find-or-create is idempotent on `(genre, role)`.
+/// Builds a `CrateSpec` for a genre with no energy role, created by the pipeline.
+fn auto_spec(genre: &str) -> CrateSpec {
+    CrateSpec {
+        genre: genre.to_owned(),
+        role: None,
+        origin: CrateOrigin::Auto,
+    }
+}
+
+/// `CrateRepository` contract: dynamic find-or-create is idempotent on `(genre, role)`, and the
+/// origin is stamped on creation only.
 pub async fn crate_repository_suite(repo: &dyn CrateRepository) {
     let house = repo
-        .find_or_create("House", None)
+        .find_or_create(&auto_spec("House"))
         .await
         .expect("create house");
     let house_again = repo
-        .find_or_create("House", None)
+        .find_or_create(&auto_spec("House"))
         .await
         .expect("find house");
     assert_eq!(
@@ -121,7 +162,7 @@ pub async fn crate_repository_suite(repo: &dyn CrateRepository) {
     );
 
     let techno = repo
-        .find_or_create("Techno", None)
+        .find_or_create(&auto_spec("Techno"))
         .await
         .expect("create techno");
     assert_ne!(house.id(), techno.id());
@@ -132,6 +173,123 @@ pub async fn crate_repository_suite(repo: &dyn CrateRepository) {
         fetched.as_ref().map(|c| c.genre().to_owned()),
         Some("House".to_owned())
     );
+
+    // A crate created in triage is recorded as manual...
+    let manual = repo
+        .find_or_create(&CrateSpec {
+            genre: "Breakbeat".to_owned(),
+            role: None,
+            origin: CrateOrigin::Manual,
+        })
+        .await
+        .expect("create manual crate");
+    assert_eq!(manual.created_by(), CrateOrigin::Manual);
+
+    // ...but resolving an existing crate must never rewrite the origin it was born with, or picking
+    // an auto crate in triage would silently rewrite how it came to exist.
+    let resolved = repo
+        .find_or_create(&CrateSpec {
+            genre: "House".to_owned(),
+            role: None,
+            origin: CrateOrigin::Manual,
+        })
+        .await
+        .expect("resolve existing house");
+    assert_eq!(resolved.id(), house.id());
+    assert_eq!(
+        resolved.created_by(),
+        CrateOrigin::Auto,
+        "an existing crate keeps its original origin"
+    );
+}
+
+/// `DecisionRepository` contract: append-only history, latest-wins per track, alternatives and the
+/// `Manual`/no-confidence shape round-tripping intact.
+/// `track_id` / `crate_id` MUST already exist in whatever store `repo` is backed by (FK-safe for
+/// SQLite).
+pub async fn decision_repository_suite(
+    repo: &dyn DecisionRepository,
+    track_id: TrackId,
+    crate_id: CrateId,
+) {
+    // A track that was never classified has no decision — absence is not an error.
+    let missing = repo
+        .find_latest_for_track(&track_id)
+        .await
+        .expect("query unknown track");
+    assert!(missing.is_none());
+
+    let auto = ClassificationDecision::new(NewDecision {
+        id: DecisionId::from_uuid(Uuid::from_u128(900)),
+        track_id,
+        crate_id,
+        source: DecisionSource::Auto,
+        confidence: Some(confidence(0.42)),
+        reason: ClassificationReason::GenreFromAi,
+        alternatives: vec![
+            GenreSuggestion {
+                genre: "Techno".to_owned(),
+                confidence: confidence(0.31),
+            },
+            GenreSuggestion {
+                genre: "Trance".to_owned(),
+                confidence: confidence(0.2),
+            },
+        ],
+        decided_at: Timestamp::from_millis(1_000),
+    });
+    repo.record(&auto).await.expect("record auto decision");
+
+    let loaded = repo
+        .find_latest_for_track(&track_id)
+        .await
+        .expect("load decision")
+        .expect("present");
+    assert_eq!(loaded.crate_id(), &crate_id);
+    assert_eq!(loaded.source(), DecisionSource::Auto);
+    assert_eq!(loaded.reason(), ClassificationReason::GenreFromAi);
+    assert_eq!(
+        loaded.confidence().map(Confidence::value),
+        Some(0.42),
+        "confidence must survive the round-trip"
+    );
+    let alternatives: Vec<(&str, f32)> = loaded
+        .alternatives()
+        .iter()
+        .map(|a| (a.genre.as_str(), a.confidence.value()))
+        .collect();
+    assert_eq!(
+        alternatives,
+        vec![("Techno", 0.31), ("Trance", 0.2)],
+        "alternatives round-trip in order — they are the triage card's chips"
+    );
+
+    // A later manual decision supersedes the auto one: history is kept, latest wins.
+    let manual = ClassificationDecision::new(NewDecision {
+        id: DecisionId::from_uuid(Uuid::from_u128(901)),
+        track_id,
+        crate_id,
+        source: DecisionSource::Manual,
+        confidence: None,
+        reason: ClassificationReason::ManualPick,
+        alternatives: Vec::new(),
+        decided_at: Timestamp::from_millis(2_000),
+    });
+    repo.record(&manual).await.expect("record manual decision");
+
+    let latest = repo
+        .find_latest_for_track(&track_id)
+        .await
+        .expect("load latest")
+        .expect("present");
+    assert_eq!(latest.source(), DecisionSource::Manual);
+    assert_eq!(latest.reason(), ClassificationReason::ManualPick);
+    assert_eq!(
+        latest.confidence(),
+        None,
+        "a manual pick carries no confidence, and None must not become 0.0"
+    );
+    assert!(latest.alternatives().is_empty());
 }
 
 /// `AuditLogPort` contract: append-only, ordered by time, with secret-free detail round-tripping.

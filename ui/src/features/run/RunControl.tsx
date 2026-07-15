@@ -19,14 +19,20 @@ import { Label } from "@/shared/ui/label";
 import { SummaryStats } from "@/features/run/SummaryStats";
 
 interface RunControlProps {
+  /** Bumped whenever anything changed the library, so the counts do not go stale. */
+  reloadKey: number;
   onLibraryChanged: () => void;
 }
 
 /** Which long-running action is in flight, if any — drives per-button spinner + shared disable state. */
 type RunAction = "scan" | "classify";
 
-/** Run panel: scan a profile, classify all, and show library counts. */
-export function RunControl({ onLibraryChanged }: RunControlProps) {
+/**
+ * Run panel: scan a profile, classify all, and show library counts.
+ * @param props.reloadKey - re-reads the counts when another panel changed the library
+ * @param props.onLibraryChanged - announces that a run changed the library
+ */
+export function RunControl({ reloadKey, onLibraryChanged }: RunControlProps) {
   const [profileUrl, setProfileUrl] = useState("");
   const [running, setRunning] = useState<RunAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -42,9 +48,12 @@ export function RunControl({ onLibraryChanged }: RunControlProps) {
     }
   }, []);
 
+  // The counts describe the whole library, so a triage decision elsewhere invalidates them just as
+  // much as a scan does — without `reloadKey` the summary keeps reporting the tracks it saw at
+  // mount, contradicting the triage panel right below it.
   useEffect(() => {
     void refreshSummary();
-  }, [refreshSummary]);
+  }, [refreshSummary, reloadKey]);
 
   const handleScan = useCallback(async () => {
     setRunning("scan");

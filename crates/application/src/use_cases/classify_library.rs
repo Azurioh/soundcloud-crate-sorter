@@ -113,10 +113,12 @@ mod tests {
     use crate::testkit::fixed_clock::FixedClock;
     use crate::testkit::in_memory_audit_log::InMemoryAuditLog;
     use crate::testkit::in_memory_crate_repository::InMemoryCrateRepository;
+    use crate::testkit::in_memory_decision_repository::InMemoryDecisionRepository;
     use crate::testkit::in_memory_settings_repository::InMemorySettingsRepository;
     use crate::testkit::in_memory_track_repository::InMemoryTrackRepository;
     use crate::testkit::seq_id_provider::SeqIdProvider;
     use crate::testkit::stub_genre_vibe_classifier::StubGenreVibeClassifier;
+    use crate::use_cases::classify_track::ClassifyTrackPorts;
 
     fn track(id_seed: u128, source_id: &str, genre: Option<&str>) -> Track {
         Track::from_scan(
@@ -149,11 +151,14 @@ mod tests {
             Arc::new(FixedClock::at_millis(1_000)),
             ids.clone(),
         ));
-        let classify = Arc::new(ClassifyTrack::new(
-            Arc::new(StubGenreVibeClassifier::failing()),
+        let classify = Arc::new(ClassifyTrack::new(ClassifyTrackPorts {
+            classifier: Arc::new(StubGenreVibeClassifier::failing()),
             crates,
-            recorder.clone(),
-        ));
+            decisions: Arc::new(InMemoryDecisionRepository::new()),
+            audit: recorder.clone(),
+            clock: Arc::new(FixedClock::at_millis(1_000)),
+            ids: ids.clone(),
+        }));
         let route = Arc::new(RouteToTriage::new(tracks.clone(), recorder));
         let settings = Arc::new(InMemorySettingsRepository::new());
 
