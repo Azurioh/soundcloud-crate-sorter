@@ -10,7 +10,9 @@ export function CrateCard({ crate }: { crate: CrateView }) {
     <Card className="overflow-hidden">
       <CardHeader className="flex flex-row items-baseline justify-between gap-4 space-y-0">
         <CardTitle className="text-base">{crate.name}</CardTitle>
-        <span className="font-mono text-sm text-muted-foreground tabular-nums">{crate.members.length} tracks</span>
+        <span className="font-mono text-sm text-muted-foreground tabular-nums">
+          {crate.members.length} {crate.members.length === 1 ? "track" : "tracks"}
+        </span>
       </CardHeader>
       <ScrollArea className="w-full">
         <Table>
