@@ -19,7 +19,7 @@ export function ErrorBanner({ message, onDismiss }: ErrorBannerProps) {
     return null;
   }
   return (
-    <Alert variant="destructive" role="alert" className="mb-3 flex items-center justify-between gap-3">
+    <Alert variant="destructive" className="mb-3 flex items-center justify-between gap-3">
       <AlertDescription>{message}</AlertDescription>
       <Button
         type="button"

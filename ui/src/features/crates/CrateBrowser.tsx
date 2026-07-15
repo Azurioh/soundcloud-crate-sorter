@@ -52,7 +52,7 @@ export function CrateBrowser({ reloadKey }: CrateBrowserProps) {
         <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
         {loading && crates.length === 0 && (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-3" role="status" aria-label="Loading crates">
             <Skeleton className="h-24 w-full" />
             <Skeleton className="h-24 w-full" />
           </div>
